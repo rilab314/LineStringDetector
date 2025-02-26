@@ -379,36 +379,6 @@ class LineStringDetector:
         cv2.imshow(window_name, vis_img)
         cv2.waitKey(0)
 
-    def _try_merge_line(self, line: LineString, line_map: np.ndarray, line_strings: List[LineString], dilated_map: np.ndarray, to_tail: bool):
-        ext_points = line.ext_points[line.src_range[1]:] if to_tail else line.ext_points[0:line.src_range[0] + 1]
-        ext_line_img = self._draw_line(ext_points, line_map.shape)
-        overlap_id = self._find_overlap(dilated_map, ext_line_img, line.id)
-        print(f'src line id: {line.id}, overlap_id: {overlap_id}')
-        if overlap_id is not None:
-            # line_strings에서 해당 id를 가진 선 찾기
-            oppo_line = next((l for l in line_strings if l.id == overlap_id), None)
-            cat_points = np.concatenate((line.points, oppo_line.points), axis=0) if to_tail else np.concatenate((oppo_line.points, line.points), axis=0)
-            if oppo_line is not None:
-                if line.length >= oppo_line.length:
-                    print(f'merge {oppo_line.id} to {line.id}')
-                    line.points = cat_points
-                    oppo_line.id = None
-                else:
-                    print(f'merge {line.id} to {oppo_line.id}')
-                    oppo_line.points = cat_points
-                    line.id = None
-
-    def _draw_line(self, points: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
-        '''
-        주어진 points를 연결하는 선을 흰색(255)으로 그린 binary 이미지 반환.
-        '''
-        line_img = np.zeros(shape, dtype=np.uint8)
-        if points.shape[0] < 2:
-            return line_img
-        pts = points.reshape((-1, 1, 2))
-        cv2.polylines(line_img, [pts], isClosed=False, color=255, thickness=1)
-        return line_img
-
     def _find_overlap(self, dilated_map: np.ndarray, line_pts: np.ndarray, src_line_id: int) -> int:
         '''
         line_img (binary)와 dilated_map (각 픽셀에 라벨값이 있음)의 겹치는 영역에서,
