@@ -45,6 +45,7 @@ class LineStringDetector:
         self._data_path = data_path
         self._npy_path = npy_path
         self._img_shape = (100, 100)
+        self._pallette = [METAINFO[i]['color'] for i in range(len(METAINFO))]
 
     def detect_line_strings(self):
         # data_path 내의 모든 png 이미지에 대해 처리
@@ -60,16 +61,17 @@ class LineStringDetector:
             # seg_img의 채널마다 (예: 차선 클래스별) 처리
             for class_id in range(1, seg_map.shape[-1]):
                 print(f'---------- class_id: {class_id}, name: {METAINFO[class_id]["name"]}, color: {METAINFO[class_id]["color"]}')
-                pred_class_map = np.all(pred_img == METAINFO[class_id]['color'], axis=-1).astype(np.uint8)
-                channel = seg_map[..., class_id] * pred_class_map
-                peaks = self._find_peaks(image, channel)
-                if peaks is None:
+                if METAINFO[class_id]["name"] in ['lane_line']:
+                    print(f'{METAINFO[class_id]["name"]} is ignored')
                     continue
-                line_map, line_strings = self._thin_image(seg_map[..., class_id], peaks, class_id)
+                pred_class_map = np.all(pred_img == METAINFO[class_id]['color'], axis=-1).astype(np.uint8)
+                line_map, line_strings = self._thin_image(pred_class_map, class_id)
+                if len(line_strings) == 0:
+                    print(f'{METAINFO[class_id]["name"]} has no line_strings')
+                    continue
                 ext_lines = self._extend_lines(line_map, line_strings)
                 merged_lines = self._merge_lines(ext_lines)
                 line_string_list.extend(merged_lines)
-            break
             self._show_line_strings(image, line_string_list)
 
     def _read_image(self, file_name: str):
@@ -82,41 +84,8 @@ class LineStringDetector:
         cv2.imshow("pred_img", pred_img)
         cv2.waitKey(0)
         return image, seg_map, pred_img
-
-    def _find_peaks(self, image: np.ndarray, seg_map: np.ndarray) -> np.ndarray:
-        '''
-        semantic segmentation 결과의 single channel 이미지에서
-        self.peak_thresh 이상의 값인 지역 극대값(peak)를 찾는다.
-        peak 간 거리는 최소 self.peak_min_dist 를 유지한다.
-        '''
-        print(f'seg_map shape: {seg_map.shape}, dtype: {seg_map.dtype}, max: {np.max(seg_map)}, mean: {np.mean(seg_map)}')
-        seg_img = (seg_map*255).astype(np.uint8)
-        cv2.imshow("channel_image", seg_img)
-        cv2.waitKey(0)
-        if np.max(seg_map) < np.mean(seg_map) * 2:
-            print('[find_peaks] No peaks found: flat seg_map')
-            return None
-        print('start peak_local_max')
-        peaks = peak_local_max(seg_map, min_distance=self.peak_min_dist, threshold_abs=self.peak_thresh)
-        peaks = peaks.astype(np.int32)
-        print(f'peaks shape: {peaks.shape}, dtype: {peaks.dtype}')
-        print(f'peaks: \n{peaks[:10]}')
-        if peaks.shape[0] > 0:
-            image_t = cv2.cvtColor(seg_img.copy(), cv2.COLOR_GRAY2BGR)
-            for peak in peaks:
-                cv2.circle(image_t, (peak[1], peak[0]), 2, (0, 0, 255), -1)
-
-            cv2.imshow("peaks", image_t)
-            cv2.waitKey(0)
-            cv2.destroyWindow("channel_image")
-            cv2.destroyWindow("peaks")
-            return peaks
-        else:
-            cv2.destroyWindow("channel_image")
-            print('[find_peaks] No peaks found')
-            return None
     
-    def _thin_image(self, seg_map: np.ndarray, peaks: np.ndarray, class_id: int) -> np.ndarray:
+    def _thin_image(self, seg_map: np.ndarray, class_id: int) -> np.ndarray:
         '''
         각 peak를 중심으로 7x7 영역의 median 값을 임계값으로 하여
         해당 blob(connected component)를 flood fill한 후 thinning을 적용.
@@ -124,54 +93,39 @@ class LineStringDetector:
         '''
         print(f'----- [thin_image] -----')
         line_strings = []
-        radius = 5
         line_map = np.zeros_like(seg_map, dtype=np.int32)
         line_blobs = np.zeros_like(seg_map, dtype=np.int32)
 
-        for k, peak in enumerate(peaks):
-            y, x = int(peak[0]), int(peak[1])
+        y, x = np.nonzero(seg_map)
+        cv2.imshow("binary", seg_map*255)
+        fill_value = self.id_offset
+        for k, (y, x) in enumerate(zip(y, x)):
             if line_blobs[y, x] > 0:
-                print(f'skip {x}, {y}, line id: {line_blobs[y, x]}')
                 continue
-
-            # patch의 범위 계산 (경계 처리)
-            x_min = max(x - radius, 0)
-            x_max = min(x + radius+1, seg_map.shape[1])
-            y_min = max(y - radius, 0)
-            y_max = min(y + radius+1, seg_map.shape[0])
-            patch = seg_map[y_min:y_max, x_min:x_max]
-            thresh_val = np.quantile(patch, 0.5)
-            print(f'peak: {(x, y)}, patch: {patch.shape}, thresh_val: {thresh_val}')
-            if thresh_val < self.peak_thresh:
-                print(f'skip {x}, {y}, thresh_val: {thresh_val}')
-                continue
-
-            # 바이너리 이미지 생성 (0,1)
-            binary = (seg_map > thresh_val).astype(np.uint8)
-            binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=2)
-            binary = cv2.erode(binary, np.ones((3, 3), np.uint8), iterations=2)
-            # binary = cv2.medianBlur(binary, 5)
-            cv2.imshow("binary", binary*255)
 
             # floodFill를 통해 seed가 포함된 blob을 채움
-            flood_fill_value = k + self.id_offset
-            temp = binary.copy()
-            mask = np.zeros((binary.shape[0] + 2, binary.shape[1] + 2), np.uint8)
-            cv2.floodFill(temp, mask, (x, y), flood_fill_value)
+            temp = seg_map.copy()
+            mask = np.zeros((seg_map.shape[0] + 2, seg_map.shape[1] + 2), np.uint8)
+            cv2.floodFill(temp, mask, (x, y), fill_value)
             # 채워진 영역을 바이너리 마스크로 변환 (0 또는 255)
-            blob_mask = (temp == flood_fill_value).astype(np.uint8) * 255
-            line_blobs[blob_mask > 0] = flood_fill_value
+            line_blobs[temp == fill_value] = fill_value
+            blob_mask = (temp == fill_value).astype(np.uint8) * 255
             cv2.imshow("blob_mask", blob_mask)
 
             # cv2.ximgproc.thinning 적용 (얇은 선 추출)
             # (cv2.ximgproc.thinning은 입력이 binary 이미지여야 함)
             line_img = cv2.ximgproc.thinning(blob_mask, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
+            num_pixels = (line_img > 0).sum()
+            if num_pixels < 50:
+                print(f'skip {x}, {y}, value: {fill_value}, blob size: {num_pixels}')
+                continue
+            print(f'fill from point at {x}, {y}, value: {fill_value}, blob size: {num_pixels}')
             # 결과를 line_map에 누적 (겹치는 영역은 덮어쓰기)
-            line_map[line_img > 0] = flood_fill_value
-            line_strings.append(LineString(id=flood_fill_value, class_id=class_id, peak=(x, y)))
-            
-            vis_img = np.zeros_like(seg_map, dtype=np.uint8)
-            vis_img[line_map > 0] = (line_map[line_map > 0] - self.id_offset) * 20 + 100
+            line_map[line_img > 0] = fill_value
+
+            line_strings.append(LineString(id=fill_value, class_id=class_id, peak=(x, y)))
+            fill_value += 1
+            vis_img = (line_map * 10).astype(np.uint8)
             cv2.imshow("line_map", vis_img)
             cv2.waitKey(0)
         
@@ -243,7 +197,7 @@ class LineStringDetector:
             last_point = sorted_points[-1] if to_tail else sorted_points[0]
             distances = np.sqrt(np.sum((points - last_point)**2, axis=1))
             dot_products = np.sum((points - last_point) * direction, axis=1)
-            valid_mask = (distances < stride*2) & (distances >= stride) & (dot_products >= 0)
+            valid_mask = (distances < 30) & (distances >= stride) & (dot_products >= 0)
             if np.sum(valid_mask) == 0:
                 break
             distances[~valid_mask] = np.inf
@@ -284,28 +238,28 @@ class LineStringDetector:
         ext_y = y_interp(new_s)
         ext_points = np.stack((ext_x, ext_y), axis=-1)
         line_string.ext_points = np.rint(ext_points).astype(np.int32)
-        print('[_extrapolate_line] points\n', points)
-        print('[_extrapolate_line] ext_points\n', ext_points)
+        print('[extrapolate_line] points\n', points)
+        print('[extrapolate_line] ext_points\n', ext_points)
         # 원래 s=0와 s=total_length에 해당하는 인덱스를 찾음
         src_start = np.argmin(np.abs(new_s - 0))
         src_end = np.argmin(np.abs(new_s - total_length))
-        line_string.src_range = (src_start, src_end + 1)
+        line_string.src_range = (src_start, src_end)
 
         # self._img_shape 범위 체크
         valid_mask = (line_string.ext_points[:, 0] >= 0) & (line_string.ext_points[:, 0] < self._img_shape[1]) & \
                     (line_string.ext_points[:, 1] >= 0) & (line_string.ext_points[:, 1] < self._img_shape[0])
         indices = np.where(valid_mask)[0]
         line_string.ext_points = line_string.ext_points[indices]
-        line_string.src_range = (line_string.src_range[0] - indices[0], line_string.src_range[1] - indices[0])
-
-        print(f'src_start: {src_start}, src_end: {src_end}, img_shape: {self._img_shape}')
+        line_string.src_range = [line_string.src_range[0] - indices[0], min(line_string.src_range[1] - indices[0], len(line_string.ext_points) - 1)] 
+        src_start, src_end = line_string.src_range 
+        print(f'src_start: {src_start}, src_end: {src_end}, ext_points shape: {len(line_string.ext_points)}, img_shape: {self._img_shape}')
         point_map = np.zeros(self._img_shape, dtype=np.uint8)
         point_map[line_string.ext_points[:, 1], line_string.ext_points[:, 0]] = 255
         cv2.circle(point_map, (line_string.ext_points[src_start, 0], line_string.ext_points[src_start, 1]), 3, (255, 0, 255), -1)
         cv2.circle(point_map, (line_string.ext_points[src_end, 0], line_string.ext_points[src_end, 1]), 3, (255, 0, 255), -1)
         cv2.circle(point_map, (line_string.ext_points[0, 0], line_string.ext_points[0, 1]), 5, (255, 0, 255), -1)
         cv2.circle(point_map, (line_string.ext_points[-1, 0], line_string.ext_points[-1, 1]), 5, (255, 0, 255), -1)
-        cv2.imshow("ext_point_map", point_map)
+        cv2.imshow("ext_point_map", point_map) 
         cv2.waitKey(0)
         return line_string
 
@@ -323,7 +277,7 @@ class LineStringDetector:
             if line.id is None:
                 continue
             line_map = self._draw_line_strings(line_strings)
-            dilated_map = cv2.dilate(line_map.astype(np.uint8), kernel, iterations=1)
+            dilated_map = cv2.dilate(line_map.astype(np.uint8), kernel, iterations=2)
             self._show_line_map(dilated_map, 'dilated_map')
             if line.ext_points is None:
                 print(f'line {line.id} has no ext_points', line)
@@ -355,7 +309,6 @@ class LineStringDetector:
         # id가 None이 아닌 선들만 남김
         line_strings = [line for line in line_strings if line.id is not None]
         self._show_line_map(self._draw_line_strings(line_strings), 'merged_map')
-        input('press any key to continue')
         cv2.destroyWindow("merged_map")
         cv2.destroyWindow("dilated_map")
         cv2.destroyWindow("two_line_map")
@@ -388,10 +341,13 @@ class LineStringDetector:
         line_img = np.zeros_like(dilated_map, dtype=np.uint8)
         pts = line_pts.reshape((-1, 1, 2))
         cv2.polylines(line_img, [pts], isClosed=False, color=(255,255,255), thickness=1)
+        cv2.imshow("line_img", line_img)
+        cv2.waitKey(0)
         overlap_labels = dilated_map[line_img > 0]
         if overlap_labels.size == 0:
             return None
         unique, counts = np.unique(overlap_labels, return_counts=True)
+        print(f'unique: {unique}, counts: {counts}')
         # 배경 0과 자기 자신 제거
         mask = (unique != 0) & (unique != src_line_id) & (counts > 3)
         overlap_ids = unique[mask]
