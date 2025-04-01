@@ -8,7 +8,6 @@ from skimage.feature import peak_local_max
 from scipy.interpolate import interp1d
 from show_imgs import ImageShow
 
-
 METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
     {'id': 1, 'name': 'center_line', 'color': (77, 77, 255)},
@@ -30,18 +29,18 @@ class LineString:
     id: int
     peak: Tuple[int, int]
     class_id: int
-    points: np.ndarray = None        # 원본 선상의 샘플링된 점들 (N,2)
-    ext_points: np.ndarray = None    # 양쪽으로 확장된 선상의 점들 ((N+M),2)
+    points: np.ndarray = None  # 원본 선상의 샘플링된 점들 (N,2)
+    ext_points: np.ndarray = None  # 양쪽으로 확장된 선상의 점들 ((N+M),2)
     src_range: Tuple[int, int] = None  # ext_points 내에서 원래 points가 차지하는 인덱스 범위
-    length: float = 0             # 선의 길이 (유클리드 누적거리)
+    length: float = 0  # 선의 길이 (유클리드 누적거리)
 
 
 class LineStringDetector:
-    peak_thresh = 0.07     # peak에서의 최소값
-    peak_min_dist = 3     # peak 사이의 최소 거리 (픽셀)
-    id_offset = 10        # peak ID의 최소 오프셋
-    sample_stride = 10    # 샘플링 간격 (픽셀)
-    extend_len = 30       # 선 확장 길이 (픽셀)
+    peak_thresh = 0.07  # peak에서의 최소값
+    peak_min_dist = 3  # peak 사이의 최소 거리 (픽셀)
+    id_offset = 10  # peak ID의 최소 오프셋
+    sample_stride = 10  # 샘플링 간격 (픽셀)
+    extend_len = 50  # 선 확장 길이 (픽셀)
 
     def __init__(self, data_path: str, npy_path: str):
         self._data_path = data_path
@@ -63,13 +62,17 @@ class LineStringDetector:
             self._id_count = self.id_offset
             line_string_list = []
             # seg_img의 채널마다 (예: 차선 클래스별) 처리
-            for class_id in range(1, seg_map.shape[-1]):
-                print(f'---------- class_id: {class_id}, name: {METAINFO[class_id]["name"]}, color: {METAINFO[class_id]["color"]}')
+            # for class_id in range(1, seg_map.shape[-1]):
+            for class_id in [7]:
+                print(
+                    f'---------- class_id: {class_id}, name: {METAINFO[class_id]["name"]}, color: {METAINFO[class_id]["color"]}')
                 if METAINFO[class_id]["name"] in ['lane_line']:
                     print(f'{METAINFO[class_id]["name"]} is ignored')
                     continue
                 pred_class_map = np.all(pred_img == METAINFO[class_id]['color'], axis=-1).astype(np.uint8)
                 line_map, line_strings = self._thin_image(pred_class_map, class_id)
+                self._imshow.show(self._draw_line_peaks(line_strings), 'blob_points')
+                self._imshow.remove(['blob_points'])
                 if len(line_strings) == 0:
                     print(f'{METAINFO[class_id]["name"]} has no line_strings')
                     continue
@@ -77,20 +80,21 @@ class LineStringDetector:
                 merged_lines = self._merge_lines(ext_lines)
                 print(f'[detect_line_strings] new lines: {len(merged_lines)}, IDs: {[ls.id for ls in merged_lines]}')
                 line_string_list.extend(merged_lines)
-            
+
             print(f'>>>>>>>>>> line_string_list: {len(line_string_list)}')
-            self._show_line_map(self._draw_line_strings(line_string_list), 'merged_map', dilate=True)
+            self._imshow.remove(['sample_points', 'ext_points'])
 
     def _read_image(self, file_name: str):
         seg_map = np.load(file_name)
-        img_file = file_name.replace(self._npy_path, self._data_path).replace('segmap', 'images').replace('.npy', '.png')
+        img_file = file_name.replace(self._npy_path, self._data_path).replace('segmap', 'images').replace('.npy',
+                                                                                                          '.png')
         image = cv2.imread(img_file)
         pred_file = img_file.replace('/images', '/pred_images')
         pred_img = cv2.imread(pred_file)
         pred_img = cv2.cvtColor(pred_img, cv2.COLOR_RGB2BGR)
         self._imshow.show(pred_img, 'pred_img')
         return image, seg_map, pred_img
-    
+
     def _thin_image(self, seg_map: np.ndarray, class_id: int) -> np.ndarray:
         '''
         각 peak를 중심으로 7x7 영역의 median 값을 임계값으로 하여
@@ -103,7 +107,7 @@ class LineStringDetector:
         line_blobs = np.zeros_like(seg_map, dtype=np.int32)
 
         y, x = np.nonzero(seg_map)
-        self._imshow.show(seg_map*255, 'seg_map', 1)
+        self._imshow.show(seg_map * 255, 'seg_map', 1)
         fill_value = self.id_offset
         for k, (y, x) in enumerate(zip(y, x)):
             if line_blobs[y, x] > 0:
@@ -116,13 +120,12 @@ class LineStringDetector:
             # 채워진 영역을 바이너리 마스크로 변환 (0 또는 255)
             line_blobs[temp == fill_value] = fill_value
             blob_mask = (temp == fill_value).astype(np.uint8) * 255
-            self._imshow.show(blob_mask, 'blob_mask', 1)
 
             # cv2.ximgproc.thinning 적용 (얇은 선 추출)
             # (cv2.ximgproc.thinning은 입력이 binary 이미지여야 함)
             line_img = cv2.ximgproc.thinning(blob_mask, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
             num_pixels = (line_img > 0).sum()
-            if num_pixels < 40:
+            if num_pixels < 5:
                 print(f'[thin_image] skip small blob at ({x}, {y}), value: {fill_value}, blob size: {num_pixels}')
                 continue
             print(f'[thin_image] fill from point at ({x}, {y}), value: {fill_value}, blob size: {num_pixels}')
@@ -131,9 +134,6 @@ class LineStringDetector:
             line_strings.append(LineString(id=fill_value, class_id=class_id, peak=(x, y)))
             fill_value += 1
             vis_img = (line_map * 10).astype(np.uint8)
-            self._imshow.show(vis_img, 'line_map', dilate=True)
-        
-        self._imshow.remove(['line_map', 'blob_mask'])
         return line_map, line_strings
 
     def _extend_lines(self, line_map: np.ndarray, line_strings: List[LineString]) -> List[LineString]:
@@ -148,13 +148,12 @@ class LineStringDetector:
         for line_string in line_strings:
             # 해당 라벨만 추출한 바이너리 이미지
             line_img = (line_map == line_string.id).astype(np.uint8)
-            self._imshow.show(line_img*255, 'line_img', dilate=True)
             line_string.points = self._sample_points(line_img, self.sample_stride)
             if line_string.points.shape[0] < 3:
                 line_string.id = None
                 continue
             line_string.length = np.sum(np.linalg.norm(np.diff(line_string.points, axis=0), axis=1))
-            if line_string.length < 10:
+            if line_string.length < 5:
                 line_string.id = None
                 continue
             line_string = self._extrapolate_line(line_string, self.extend_len, self.sample_stride)
@@ -162,7 +161,9 @@ class LineStringDetector:
         line_strings = [ls for ls in line_strings if ls.id is not None]
         # 선 길이에 따라 내림차순 정렬
         line_strings.sort(key=lambda ls: ls.length, reverse=True)
-        self._imshow.remove(['sample_points', 'ext_point_map', 'line_img'])
+        self._imshow.show(self._draw_sample_points(line_strings), 'sample_points')
+        self._imshow.show(self._draw_ext_points(line_strings), 'ext_points')
+        self._pause_img()
         return line_strings
 
     def _sample_points(self, line_img: np.ndarray, stride: int) -> np.ndarray:
@@ -178,21 +179,15 @@ class LineStringDetector:
         sorted_points = self._sort_to_direction(points, sorted_points, True, direction, stride)
         sorted_points = self._sort_to_direction(points, sorted_points, False, -direction, stride)
         sorted_points = np.array(sorted_points).astype(np.int32)
-        print(f'[sample_points] sorted_points: shape: {sorted_points.shape} \n{sorted_points}')
-
-        point_map = np.zeros_like(line_img, dtype=np.uint8)
-        point_map[sorted_points[:, 1], sorted_points[:, 0]] = 255
-        cv2.circle(point_map, (sorted_points[0, 0], sorted_points[0, 1]), 3, (255, 0, 255), -1)
-        cv2.circle(point_map, (sorted_points[-1, 0], sorted_points[-1, 1]), 3, (255, 0, 255), -1)
-        cv2.circle(point_map, (points[0, 0], points[0, 1]), 3, (150, 150, 150), 2)
-        self._imshow.show(point_map, 'sample_points', 1, dilate=True)
+        print(f'[sample_points] sorted_points: shape: {sorted_points.shape} \n{sorted_points * 0.6}')
         return sorted_points.astype(np.int32)
-    
-    def _sort_to_direction(self, src_points: np.ndarray, sorted_points: List[np.ndarray], to_tail: bool, direction: np.ndarray, stride: int) -> List[np.ndarray]:
+
+    def _sort_to_direction(self, src_points: np.ndarray, sorted_points: List[np.ndarray], to_tail: bool,
+                           direction: np.ndarray, stride: int) -> List[np.ndarray]:
         points = src_points.copy()
         while len(points) > 0:
             last_point = sorted_points[-1] if to_tail else sorted_points[0]
-            distances = np.sqrt(np.sum((points - last_point)**2, axis=1))
+            distances = np.sqrt(np.sum((points - last_point) ** 2, axis=1))
             dot_products = np.sum((points - last_point) * direction, axis=1)
             valid_mask = (distances < 30) & (distances >= stride) & (dot_products >= 0)
             if np.sum(valid_mask) == 0:
@@ -207,7 +202,7 @@ class LineStringDetector:
                 sorted_points.insert(0, points[next_index])
                 # print(f'[sort_to_direction] next point: {sorted_points[0]}')
                 direction = sorted_points[0] - last_point
-            distances = np.sqrt(np.sum((points - last_point)**2, axis=1))
+            distances = np.sqrt(np.sum((points - last_point) ** 2, axis=1))
             points = points[distances >= stride]
         return sorted_points
 
@@ -234,9 +229,11 @@ class LineStringDetector:
         ext_x = x_interp(new_s)
         ext_y = y_interp(new_s)
         ext_points = np.stack((ext_x, ext_y), axis=-1)
+        ext_points = np.clip(ext_points, 0, None)
         line_string.ext_points = np.rint(ext_points).astype(np.int32)
         # print('[extrapolate_line] points\n', points)
-        print('[extrapolate_line] ext_points\n', ext_points)
+        print(f'[extrapolate_line] ext_points \n{ext_points * 0.6}')
+
         # 원래 s=0와 s=total_length에 해당하는 인덱스를 찾음
         src_start = np.argmin(np.abs(new_s - 0))
         src_end = np.argmin(np.abs(new_s - total_length))
@@ -244,19 +241,13 @@ class LineStringDetector:
 
         # self._img_shape 범위 체크
         valid_mask = (line_string.ext_points[:, 0] >= 0) & (line_string.ext_points[:, 0] < self._img_shape[1]) & \
-                    (line_string.ext_points[:, 1] >= 0) & (line_string.ext_points[:, 1] < self._img_shape[0])
+                     (line_string.ext_points[:, 1] >= 0) & (line_string.ext_points[:, 1] < self._img_shape[0])
         indices = np.where(valid_mask)[0]
         line_string.ext_points = line_string.ext_points[indices]
-        line_string.src_range = [line_string.src_range[0] - indices[0], min(line_string.src_range[1] - indices[0], len(line_string.ext_points) - 1)] 
-        src_start, src_end = line_string.src_range 
+        line_string.src_range = [line_string.src_range[0] - indices[0],
+                                 min(line_string.src_range[1] - indices[0], len(line_string.ext_points) - 1)]
+        src_start, src_end = line_string.src_range
         print(f'src_start: {src_start}, src_end: {src_end}, ext_points shape: {len(line_string.ext_points)}, img_shape: {self._img_shape}')
-        point_map = np.zeros(self._img_shape, dtype=np.uint8)
-        point_map[line_string.ext_points[:, 1], line_string.ext_points[:, 0]] = 255
-        cv2.circle(point_map, (line_string.ext_points[src_start, 0], line_string.ext_points[src_start, 1]), 3, (255, 0, 255), -1)
-        cv2.circle(point_map, (line_string.ext_points[src_end, 0], line_string.ext_points[src_end, 1]), 3, (255, 0, 255), -1)
-        cv2.circle(point_map, (line_string.ext_points[0, 0], line_string.ext_points[0, 1]), 5, (255, 0, 255), -1)
-        cv2.circle(point_map, (line_string.ext_points[-1, 0], line_string.ext_points[-1, 1]), 5, (255, 0, 255), -1)
-        self._imshow.show(point_map, 'ext_point_map', 0, dilate=True)
         return line_string
 
     def _merge_lines(self, line_strings: List[LineString]) -> List[LineString]:
@@ -273,8 +264,11 @@ class LineStringDetector:
             if line.id is None:
                 continue
             line_map = self._draw_line_strings(line_strings)
+            line_map_color = self._draw_line_strings_color(line_strings)
             dilated_map = cv2.dilate(line_map.astype(np.uint8), kernel, iterations=2)
             self._show_line_map(dilated_map, 'dilated_map')
+            self._imshow.show(self._draw_sample_points(line, line_map=line_map_color), 'sample_on_map')
+            self._imshow.show(self._draw_ext_points(line, line_map=line_map_color), 'ext_on_map')
             if line.ext_points is None:
                 print(f'line {line.id} has no ext_points', line)
                 continue
@@ -285,13 +279,11 @@ class LineStringDetector:
             for overlap_id in overlap_ids:
                 print(f'line {overlap_id} is merged to line {line.id}')
                 oppo_line = next((l for l in line_strings if l.id == overlap_id), None)
-                two_line_map = ((line_map == line.id) | (line_map == oppo_line.id)).astype(np.uint8)
-                two_line_map = cv2.dilate(two_line_map, kernel, iterations=2)
-                two_line_map = cv2.erode(two_line_map, kernel, iterations=1)
-                self._imshow.show(two_line_map*255, 'two_line_map')
-                new_line_map = cv2.ximgproc.thinning(two_line_map*255, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
-                self._imshow.show(new_line_map, 'two_line_map', dilate=True)
-                line.points = self._sample_points(new_line_map, 5)
+                combined_points = np.concatenate((line.ext_points, oppo_line.points), axis=0)
+                combined_img = np.zeros(self._img_shape, dtype=np.uint8)
+                for pt in combined_points:
+                    combined_img[pt[1], pt[0]] = 255
+                line.points = self._sample_points(combined_img, self.sample_stride)
                 line.length = np.sum(np.linalg.norm(np.diff(line.points, axis=0), axis=1))
                 line = self._extrapolate_line(line, self.extend_len, self.sample_stride)
                 oppo_line.id = None
@@ -300,21 +292,94 @@ class LineStringDetector:
         # id가 None이 아닌 선들만 남김
         line_strings = [line for line in line_strings if line.id is not None]
         self._show_line_map(self._draw_line_strings(line_strings), 'merged_map', dilate=True)
-        self._imshow.remove(['sample_points', 'ext_point_map', 'merged_map', 'dilated_map', 'two_line_map'])
+        self._pause_img()
+        self._imshow.remove(['merged_map', 'dilated_map', 'sample_on_map', 'ext_on_map'])
         return line_strings
 
     def _draw_line_strings(self, line_strings: List[LineString]):
-        image = np.zeros((self._img_shape[1], self._img_shape[0]), dtype=np.uint8)
+        image = np.zeros((self._img_shape[1], self._img_shape[0], 3), dtype=np.uint8)
         for line in line_strings:
             if line.id is None:
                 continue
             pts = line.points.reshape((-1, 1, 2))
-            cv2.polylines(image, [pts], isClosed=False, color=(line.id,line.id,line.id), thickness=1)
+            cv2.polylines(image, [pts], isClosed=False, color=(line.id, line.id, line.id), thickness=1)
         return image
-    
+
+    def _draw_line_strings_color(self, line_strings: List[LineString]):
+        image = np.zeros((self._img_shape[1], self._img_shape[0], 3), dtype=np.uint8)
+        for line in line_strings:
+            if line.id is None:
+                continue
+            pts = line.points.reshape((-1, 1, 2))
+            cv2.polylines(image, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
+        return image
+
+    def _draw_line_peaks(self, line_strings: List[LineString]):
+        image = np.zeros((self._img_shape[1], self._img_shape[0]), dtype=np.uint8)
+        for line in line_strings:
+            if line is None or line.id is None:
+                continue
+            if line.peak is None:
+                continue
+            color = line.id + 150
+            cv2.circle(image, line.peak, 3, (color, color, color), -1)
+        return image
+
+    def _draw_line_points(self, points):
+        image = np.zeros((self._img_shape[0], self._img_shape[1]), dtype=np.uint8)
+        if points is None:
+            return image
+        color = 180
+        for pt in points:
+            cv2.circle(image, tuple(pt), 3, (color, color, color), -1)
+        return image
+
+    def _draw_sample_points(self, line_strings, line_map=None):
+        if not isinstance(line_strings, list):
+            line_strings = [line_strings]
+        if line_map is not None:
+            image = line_map.copy()
+        else:
+            image = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
+        for line_string in line_strings:
+            if line_string is None or line_string.points is None:
+                return image
+
+            num_points = line_string.points.shape[0]
+            for i, pt in enumerate(line_string.points):
+                if i == 0 or i == num_points - 1:
+                    color = (0, 0, 255)
+                    radius = 3
+                else:
+                    color = (255, 255, 255)
+                    radius = 1
+                cv2.circle(image, tuple(pt), radius, color, -1)
+        return image
+
+    def _draw_ext_points(self, line_strings, line_map=None):
+        if not isinstance(line_strings, list):
+            line_strings = [line_strings]
+        if line_map is not None:
+            image = line_map.copy()
+        else:
+            image = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
+        for line in line_strings:
+            if line is None or line.ext_points is None:
+                continue
+            cv2.circle(image, (int(line.ext_points[0, 0]), int(line.ext_points[0, 1])), 5, (0, 255, 0), -1)
+            cv2.circle(image, (int(line.ext_points[-1, 0]), int(line.ext_points[-1, 1])), 5, (0, 255, 0), -1)
+            if line.src_range is not None and len(line.src_range) == 2:
+                src_start, src_end = line.src_range
+                cv2.circle(image, (int(line.ext_points[src_start, 0]), int(line.ext_points[src_start, 1])), 5, (0, 0, 255), -1)
+                cv2.circle(image, (int(line.ext_points[src_end, 0]), int(line.ext_points[src_end, 1])), 5, (0, 0, 255), -1)
+            for pt in line.ext_points[1:-1]:
+                cv2.circle(image, (int(pt[0]), int(pt[1])), 1, (255, 255, 255), -1)
+        return image
+
+
     def _show_line_map(self, line_map: np.ndarray, window_name: str, dilate: bool = False):
         vis_img = np.zeros_like(line_map, dtype=np.uint8)
-        vis_img[line_map > 0] = (line_map[line_map > 0] - self.id_offset) * 20 + 100
+        vis_img[line_map > 0] = (line_map[line_map > 0]) + 150
         self._imshow.show(vis_img, window_name, 0, dilate)
 
     def _find_overlap(self, dilated_map: np.ndarray, line_pts: np.ndarray, src_line_id: int) -> int:
@@ -325,7 +390,7 @@ class LineStringDetector:
         '''
         line_img = np.zeros_like(dilated_map, dtype=np.uint8)
         pts = line_pts.reshape((-1, 1, 2))
-        cv2.polylines(line_img, [pts], isClosed=False, color=(255,255,255), thickness=1)
+        cv2.polylines(line_img, [pts], isClosed=False, color=(255, 255, 255), thickness=1)
         overlap_labels = dilated_map[line_img > 0]
         if overlap_labels.size == 0:
             return None
@@ -336,11 +401,17 @@ class LineStringDetector:
         overlap_ids = unique[mask]
         return overlap_ids
 
+    def _pause_img(self):
+        while True:
+            key = cv2.waitKey()
+            if key == ord('n'):
+                break
 
 
 def main():
-    npy_path = '/media/dolphin/My Book/mask2former'
-    data_path = '/home/dolphin/choi_ws/LaneDetector/dataset/mask2former'
+    npy_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/mask2former'
+    # data_path = '/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/extract_images'
+    data_path = '/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former'
     line_detector = LineStringDetector(data_path, npy_path)
     line_detector.detect_line_strings()
 
