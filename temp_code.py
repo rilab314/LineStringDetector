@@ -8,6 +8,7 @@ from skimage.feature import peak_local_max
 from scipy.interpolate import interp1d
 from show_imgs import ImageShow
 
+
 METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
     {'id': 1, 'name': 'center_line', 'color': (77, 77, 255)},
@@ -22,7 +23,6 @@ METAINFO = [
     {'id': 10, 'name': 'safety_zone', 'color': (255, 77, 128)},
     {'id': 11, 'name': 'bicycle_lane', 'color': (128, 255, 77)},
 ]
-
 
 @dataclass
 class LineString:
@@ -206,49 +206,64 @@ class LineStringDetector:
             points = points[distances >= stride]
         return sorted_points
 
-    def _extrapolate_line(self, line_string: LineString, extend_len: int, stride: int) -> LineString:
+    def _extrapolate_line(self, line_string: LineString, extend_len: int, stride: int, avg_window: int = 15) -> LineString:
         '''
         주어진 points(순서대로 연결된 좌표들)에 대해 누적 arc length를 계산한 뒤,
         1D cubic interpolation (interp1d, extrapolate 옵션)을 이용하여
         양 끝으로 extend_len 만큼 선을 연장한 좌표들을 생성한다.
         새로 생성된 선의 좌표에서 원래 points가 차지하는 인덱스 범위(src_range)도 함께 반환.
         '''
-        # 누적 arc length 계산
         points = line_string.points
-        diffs = np.diff(points, axis=0)
-        dists = np.sqrt((diffs ** 2).sum(axis=1))
-        s = np.concatenate(([0], np.cumsum(dists)))
-        total_length = s[-1]
+        if points is None or len(points) < 2:
+            print(f'[extrapolate_line] skipped: too few points')
+            line_string.ext_points = None
+            return line_string
 
-        # x, y 좌표에 대해 cubic interpolation 생성
-        x_interp = interp1d(s, points[:, 0], kind='linear', fill_value="extrapolate")
-        y_interp = interp1d(s, points[:, 1], kind='linear', fill_value="extrapolate")
+        n = len(points)
+        # 앞쪽 평균 방향 (head)
+        head_dir = self._get_avg_direction(points[:min(avg_window + 1, n)])
+        # 뒤쪽 평균 방향 (tail)
+        tail_dir = self._get_avg_direction(points[max(n - avg_window - 1, 0):])
 
-        # stride 픽셀 간격으로 새로운 s 값을 생성 (양쪽 확장)
-        new_s = np.arange(-extend_len, total_length + extend_len, stride)
-        ext_x = x_interp(new_s)
-        ext_y = y_interp(new_s)
-        ext_points = np.stack((ext_x, ext_y), axis=-1)
+        # 확장 좌표 생성
+        n_head = int(extend_len // stride)
+        head_ex = [points[0] - (i + 1) * stride * head_dir for i in reversed(range(n_head))]
+
+        n_tail = int(extend_len // stride)
+        tail_ex = [points[-1] + (i + 1) * stride * tail_dir for i in range(n_tail)]
+
+        # 병합
+        ext_points = np.vstack((head_ex, points, tail_ex))
         ext_points = np.clip(ext_points, 0, None)
         line_string.ext_points = np.rint(ext_points).astype(np.int32)
-        # print('[extrapolate_line] points\n', points)
-        print(f'[extrapolate_line] ext_points \n{ext_points * 0.6}')
 
-        # 원래 s=0와 s=total_length에 해당하는 인덱스를 찾음
-        src_start = np.argmin(np.abs(new_s - 0))
-        src_end = np.argmin(np.abs(new_s - total_length))
+        # src range 계산
+        src_start = len(head_ex)
+        src_end = src_start + len(points) - 1
         line_string.src_range = (src_start, src_end)
 
-        # self._img_shape 범위 체크
+        # 이미지 경계 내로 제한
         valid_mask = (line_string.ext_points[:, 0] >= 0) & (line_string.ext_points[:, 0] < self._img_shape[1]) & \
                      (line_string.ext_points[:, 1] >= 0) & (line_string.ext_points[:, 1] < self._img_shape[0])
         indices = np.where(valid_mask)[0]
+        if len(indices) == 0:
+            line_string.ext_points = None
+            return line_string
+
         line_string.ext_points = line_string.ext_points[indices]
-        line_string.src_range = [line_string.src_range[0] - indices[0],
-                                 min(line_string.src_range[1] - indices[0], len(line_string.ext_points) - 1)]
-        src_start, src_end = line_string.src_range
-        print(f'src_start: {src_start}, src_end: {src_end}, ext_points shape: {len(line_string.ext_points)}, img_shape: {self._img_shape}')
+        line_string.src_range = [
+            max(0, src_start - indices[0]),
+            min(src_end - indices[0], len(line_string.ext_points) - 1)
+        ]
         return line_string
+
+    def _get_avg_direction(self, segment: np.ndarray) -> np.ndarray:
+        vecs = np.diff(segment, axis=0)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        vecs = np.divide(vecs, norms, where=(norms > 1e-6))
+        avg_dir = vecs.mean(axis=0)
+        norm = np.linalg.norm(avg_dir)
+        return avg_dir / norm if norm > 1e-6 else np.array([0, 0], dtype=np.float32)
 
     def _merge_lines(self, line_strings: List[LineString]) -> List[LineString]:
         '''
@@ -295,6 +310,25 @@ class LineStringDetector:
         self._pause_img()
         self._imshow.remove(['merged_map', 'dilated_map', 'sample_on_map', 'ext_on_map'])
         return line_strings
+
+    def _find_overlap(self, dilated_map: np.ndarray, line_pts: np.ndarray, src_line_id: int) -> int:
+        '''
+        line_img (binary)와 dilated_map (각 픽셀에 라벨값이 있음)의 겹치는 영역에서,
+        배경(0)을 제외하고 가장 많이 등장하는 라벨값을 반환.
+        겹치는 부분이 없으면 None 반환.
+        '''
+        line_img = np.zeros_like(dilated_map, dtype=np.uint8)
+        pts = line_pts.reshape((-1, 1, 2))
+        cv2.polylines(line_img, [pts], isClosed=False, color=(255, 255, 255), thickness=1)
+        overlap_labels = dilated_map[line_img > 0]
+        if overlap_labels.size == 0:
+            return None
+        unique, counts = np.unique(overlap_labels, return_counts=True)
+        print(f'[find_overlap] src_line_id: {src_line_id}, unique: {unique}, counts: {counts}')
+        # 배경 0과 자기 자신 제거
+        mask = (unique != 0) & (unique != src_line_id) & (counts > 3)
+        overlap_ids = unique[mask]
+        return overlap_ids
 
     def _draw_line_strings(self, line_strings: List[LineString]):
         image = np.zeros((self._img_shape[1], self._img_shape[0], 3), dtype=np.uint8)
@@ -376,30 +410,10 @@ class LineStringDetector:
                 cv2.circle(image, (int(pt[0]), int(pt[1])), 1, (255, 255, 255), -1)
         return image
 
-
     def _show_line_map(self, line_map: np.ndarray, window_name: str, dilate: bool = False):
         vis_img = np.zeros_like(line_map, dtype=np.uint8)
         vis_img[line_map > 0] = (line_map[line_map > 0]) + 150
         self._imshow.show(vis_img, window_name, 0, dilate)
-
-    def _find_overlap(self, dilated_map: np.ndarray, line_pts: np.ndarray, src_line_id: int) -> int:
-        '''
-        line_img (binary)와 dilated_map (각 픽셀에 라벨값이 있음)의 겹치는 영역에서,
-        배경(0)을 제외하고 가장 많이 등장하는 라벨값을 반환.
-        겹치는 부분이 없으면 None 반환.
-        '''
-        line_img = np.zeros_like(dilated_map, dtype=np.uint8)
-        pts = line_pts.reshape((-1, 1, 2))
-        cv2.polylines(line_img, [pts], isClosed=False, color=(255, 255, 255), thickness=1)
-        overlap_labels = dilated_map[line_img > 0]
-        if overlap_labels.size == 0:
-            return None
-        unique, counts = np.unique(overlap_labels, return_counts=True)
-        print(f'[find_overlap] src_line_id: {src_line_id}, unique: {unique}, counts: {counts}')
-        # 배경 0과 자기 자신 제거
-        mask = (unique != 0) & (unique != src_line_id) & (counts > 3)
-        overlap_ids = unique[mask]
-        return overlap_ids
 
     def _pause_img(self):
         while True:
