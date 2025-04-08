@@ -278,7 +278,7 @@ class LineStringDetector:
         for line in line_strings:
             if line.id is None:
                 continue
-            line_map = self._draw_line_strings(line_strings)
+            line_map = self._draw_line_strings(line_strings, extend=True)
             line_map_color = self._draw_line_strings_color(line_strings)
             dilated_map = cv2.dilate(line_map.astype(np.uint8), kernel, iterations=2)
             self._show_line_map(dilated_map, 'dilated_map')
@@ -294,7 +294,8 @@ class LineStringDetector:
             for overlap_id in overlap_ids:
                 print(f'line {overlap_id} is merged to line {line.id}')
                 oppo_line = next((l for l in line_strings if l.id == overlap_id), None)
-                combined_points = np.concatenate((line.ext_points, oppo_line.points), axis=0)
+                combined_points = np.concatenate((line.points, oppo_line.points), axis=0)
+                # 겹치는 방향만 늘어나도록
                 combined_img = np.zeros(self._img_shape, dtype=np.uint8)
                 for pt in combined_points:
                     combined_img[pt[1], pt[0]] = 255
@@ -330,8 +331,16 @@ class LineStringDetector:
         overlap_ids = unique[mask]
         return overlap_ids
 
-    def _draw_line_strings(self, line_strings: List[LineString]):
+    def _draw_line_strings(self, line_strings: List[LineString], extend = False):
+        # 구분할 수 있는 입력인자 넣을것
         image = np.zeros((self._img_shape[1], self._img_shape[0], 3), dtype=np.uint8)
+        if extend:
+            for line in line_strings:
+                if line.id is None:
+                    continue
+                pts = line.ext_points.reshape((-1, 1, 2))
+                cv2.polylines(image, [pts], isClosed=False, color=(line.id, line.id, line.id), thickness=1)
+
         for line in line_strings:
             if line.id is None:
                 continue
