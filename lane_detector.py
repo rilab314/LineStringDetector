@@ -409,9 +409,8 @@ class LineStringDetector:
 
 
 def main():
-    npy_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/mask2former'
-    # data_path = '/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/extract_images'
-    data_path = '/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former'
+    npy_path = '/media/gorilla/새 볼륨/Ongoing/2025_LaneDetector/mask2former'
+    data_path = '/home/gorilla/youn_ws/LaneDetector_rilab/dataset/mask2former'
     line_detector = LineStringDetector(data_path, npy_path)
     line_detector.detect_line_strings()
 
