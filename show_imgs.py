@@ -7,57 +7,60 @@ class ImageShow:
     pad = 10
     title_pad = 25
 
-    def __init__(self, window_title: str, columns: int, scale: float = 1.0):
+    def __init__(self, window_title: str, columns: int, scale: float = 1.0, enabeled=False):
         self.save_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/class_img'
         self._window_title = window_title
         self._columns = columns
         self._scale = scale
         self._titled_imgs = {}
+        self._enabeled = enabeled
 
     def show(self, image: np.ndarray, title: str, wait_ms: int = 0, dilate: bool = False, file_name: str = None, class_id: int = None):
-        if dilate:
-            image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
-        label_image = image.copy()
-        self._titled_imgs[title] = image
-        image = self.update_whole_image()
-        image = self.scale_image(image)
-        if file_name is not None and class_id is None:
-            file_only = os.path.basename(file_name)
-            file_png = os.path.splitext(file_only)[0] + ".png"
-            folder_path = os.path.join(self.save_path, 'all_class_merged')
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-            cv2.imwrite(os.path.join(folder_path, file_png), label_image)
+        if not self._enabeled:
+            if dilate:
+                image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
+            label_image = image.copy()
+            self._titled_imgs[title] = image
+            image = self.update_whole_image()
+            image = self.scale_image(image)
+            if file_name is not None and class_id is None:
+                file_only = os.path.basename(file_name)
+                file_png = os.path.splitext(file_only)[0] + ".png"
+                folder_path = os.path.join(self.save_path, 'all_class_merged')
+                if not os.path.exists(folder_path):
+                    os.makedirs(folder_path)
+                cv2.imwrite(os.path.join(folder_path, file_png), label_image)
 
-        if file_name is not None and class_id is not None:
-            file_only = os.path.basename(file_name)
-            file_png = os.path.splitext(file_only)[0] + ".png"
-            folder_path = os.path.join(self.save_path, str(class_id))
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-            cv2.imwrite(os.path.join(folder_path, file_png), image)
+            if file_name is not None and class_id is not None:
+                file_only = os.path.basename(file_name)
+                file_png = os.path.splitext(file_only)[0] + ".png"
+                folder_path = os.path.join(self.save_path, str(class_id))
+                if not os.path.exists(folder_path):
+                    os.makedirs(folder_path)
+                cv2.imwrite(os.path.join(folder_path, file_png), image)
 
-        cv2.imshow(self._window_title, image)
-        cv2.waitKey(wait_ms)
+            cv2.imshow(self._window_title, image)
+            cv2.waitKey(wait_ms)
     
     def remove(self, title, wait_ms: int = 0):
-        if isinstance(title, str):
-            if title in self._titled_imgs:
-                del self._titled_imgs[title]
-            else:
-                # print(f'[ImageShow.remove] {title}
-                pass
-        elif isinstance(title, list):
-            for name in title:
-                if name in self._titled_imgs:
-                    del self._titled_imgs[name]
+        if not self._enabeled:
+            if isinstance(title, str):
+                if title in self._titled_imgs:
+                    del self._titled_imgs[title]
                 else:
-                    # print(f'[ImageShow.remove] {name} is not in titled_imgs')
-                    continue
-        image = self.update_whole_image()
-        image = self.scale_image(image)
-        cv2.imshow(self._window_title, image)
-        cv2.waitKey(wait_ms)
+                    # print(f'[ImageShow.remove] {title}
+                    pass
+            elif isinstance(title, list):
+                for name in title:
+                    if name in self._titled_imgs:
+                        del self._titled_imgs[name]
+                    else:
+                        # print(f'[ImageShow.remove] {name} is not in titled_imgs')
+                        continue
+            image = self.update_whole_image()
+            image = self.scale_image(image)
+            cv2.imshow(self._window_title, image)
+            cv2.waitKey(wait_ms)
 
     def update_whole_image(self):
         titled_imgs = self.gray_to_bgr(self._titled_imgs)
