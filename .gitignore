@@ -1,1 +1,8 @@
 __pycache__/
+.idea
+.vscode
+*.txt
+*.csv
+*.json
+*.yaml
+*.yml
