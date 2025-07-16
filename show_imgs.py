@@ -15,7 +15,10 @@ class ImageShow:
         self._titled_imgs = {}
         self._enabeled = enabeled
 
-    def show(self, image: np.ndarray, title: str, wait_ms: int = 0, dilate: bool = False, file_name: str = None, class_id: int = None):
+    def show(self, image: np.ndarray, title: str, wait_ms: int = None, scale: float = 1.0, offset: int = 0, dilate: bool = False, file_name: str = None, class_id: int = None):
+        image = (image.copy() * scale).astype(np.uint8)
+        if offset > 0:
+            image[image > 0] = np.clip(image[image > 0].astype(int) + offset, 0, 255).astype(image.dtype)
         if not self._enabeled:
             if dilate:
                 image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
@@ -40,7 +43,8 @@ class ImageShow:
                 cv2.imwrite(os.path.join(folder_path, file_png), image)
 
             cv2.imshow(self._window_title, image)
-            cv2.waitKey(wait_ms)
+            if wait_ms is not None:
+                cv2.waitKey(wait_ms)
     
     def remove(self, title, wait_ms: int = 0):
         if not self._enabeled:
