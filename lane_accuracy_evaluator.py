@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from collections import defaultdict
 
+# 클래스 메타 정보
 METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
     {'id': 1, 'name': 'center_line', 'color': (77, 77, 255)},
@@ -41,137 +42,134 @@ def convert_to_color(img):
     return color_img
 
 
-def visualize_images(gt, inference, pred, origin_img, file_name, save_dir=None):
+def visualize_images(origin_img, gt, pred, post_processing, file_name, show=False, save=False, save_dir=None):
     gt_color = convert_to_color(gt)
-    inference_color = convert_to_color(inference)
     pred_color = convert_to_color(pred)
-    # Add vertical white separators between images
+    post_processing_color = convert_to_color(post_processing)
+
     sep_width = 5
     h, w = gt.shape
     separator = np.ones((h, sep_width, 3), dtype=np.uint8) * 255
-    comparison_img = cv2.hconcat([origin_img, separator, gt_color, separator, inference_color, separator, pred_color])
+    comparison_img = cv2.hconcat([origin_img, separator, gt_color, separator, pred_color, separator, post_processing_color])
 
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
+    comparison_img = cv2.resize(comparison_img, (comparison_img.shape[1] // 2, comparison_img.shape[0] // 2))
+
+    if save and save_dir:
         base_name = os.path.splitext(file_name)[0]
         save_path = os.path.join(save_dir, f"{base_name}.png")
         cv2.imwrite(save_path, comparison_img)
         print(f"[SAVE] 비교 이미지 저장됨: {save_path}")
-    else:
-        cv2.imshow('GT | Inference | Pred', comparison_img)
+
+    if show:
+        cv2.imshow('Original | GT | Pred | Post-processing', comparison_img)
         print(f"[INFO] 현재 비교 중인 이미지: {file_name}")
         print("Enter 키를 누르면 다음 이미지로 진행합니다.")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
 
-def evaluate_class_accuracy(gt_folder, inference_folder, pred_folder, origin_folder, output_txt, show_images=True, save_dir=None):
+def evaluate_class_accuracy(data_path, show_images=True, save_images=True):
+    origin_folder = os.path.join(data_path, 'images', 'validation')
+    gt_folder = os.path.join(data_path, 'annotations', 'validation')
+    pred_folder = os.path.join(data_path, 'pred_images')
+    post_processing_folder = os.path.join(data_path, 'post_processing')
+
+
+    origin_files = set(f for f in os.listdir(origin_folder) if f.endswith('.png'))
     gt_files = set(f for f in os.listdir(gt_folder) if f.endswith('.png'))
     pred_files = set(f for f in os.listdir(pred_folder) if f.endswith('.png'))
-    inference_files = set(f for f in os.listdir(inference_folder) if f.endswith('.png'))
-    origin_files = set(f for f in os.listdir(origin_folder) if f.endswith('.png'))
+    post_processing_files = set(f for f in os.listdir(post_processing_folder) if f.endswith('.png'))
 
-    common_files = sorted(list(gt_files & pred_files & inference_files))
+    common_files = sorted(list(gt_files & pred_files & post_processing_files))
     total_images = len(common_files)
 
     if not common_files:
-        print("GT, Inference, Pred 모두 존재하는 파일이 없습니다.")
+        print("GT, Pred, Post-processing 모두 존재하는 파일이 없습니다.")
         return
 
     class_acc_pred = defaultdict(list)
-    class_acc_inf = defaultdict(list)
+    class_acc_post = defaultdict(list)
+
+    save_dir = os.path.join(data_path, 'evaluate_images') if save_images else None
+    if save_images:
+        os.makedirs(save_dir, exist_ok=True)
 
     for idx, file_name in enumerate(common_files):
-        gt_path = os.path.join(gt_folder, file_name)
-        inference_path = os.path.join(inference_folder, file_name)
-        pred_path = os.path.join(pred_folder, file_name)
         origin_path = os.path.join(origin_folder, file_name)
+        gt_path = os.path.join(gt_folder, file_name)
+        pred_path = os.path.join(pred_folder, file_name)
+        post_path = os.path.join(post_processing_folder, file_name)
 
         origin_img = cv2.imread(origin_path)
-
         gt = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
-        gt = np.clip(gt - 1, 0, 11)
 
-        inference_bgr = cv2.imread(inference_path)
-        inference_rgb = cv2.cvtColor(inference_bgr, cv2.COLOR_BGR2RGB)
-        inference = color2class_id(inference_rgb)
+        ignore_mask = gt == 0.
+        gt = gt - 1
+        gt[ignore_mask] = 0
 
-        pred_bgr = cv2.imread(pred_path)
-        pred_rgb = cv2.cvtColor(pred_bgr, cv2.COLOR_BGR2RGB)
+        pred_rgb = cv2.cvtColor(cv2.imread(pred_path), cv2.COLOR_BGR2RGB)
         pred = color2class_id(pred_rgb)
 
-        if show_images or save_dir:
-            visualize_images(gt, inference, pred, origin_img, file_name, save_dir)
+        post_rgb = cv2.cvtColor(cv2.imread(post_path), cv2.COLOR_BGR2RGB)
+        post = color2class_id(post_rgb)
 
-        for class_id in range(1, 12):  # ID 0 = ignore
-            # AFTER (정확한 비교를 위한 분리된 mask 정의)
-            mask_pred = (gt == class_id) | (pred == class_id)
-            mask_inf = (gt == class_id) | (inference == class_id)
+        visualize_images(origin_img, gt, pred, post, file_name, show=show_images, save=save_images, save_dir=save_dir)
 
-            if np.sum(mask_inf) == 0:
-                continue
-            if np.sum(mask_pred) == 0:
+        for class_id in range(1, 12):  # 클래스 0은 무시
+            gt_mask = (gt == class_id)
+            if np.sum(gt_mask) == 0:
                 continue
 
-            acc_pred = np.sum((gt == pred) & (gt == class_id)) / np.sum(mask_pred)
+            pred_mask = (pred == class_id)
+            post_mask = (post == class_id)
+
+            acc_pred = np.sum(gt_mask & pred_mask) / np.sum(gt_mask)
+            acc_post = np.sum(gt_mask & post_mask) / np.sum(gt_mask)
+
             class_acc_pred[class_id].append(acc_pred)
+            class_acc_post[class_id].append(acc_post)
 
-            acc_inf = np.sum((gt == inference) & (gt == class_id)) / np.sum(mask_inf)
-            class_acc_inf[class_id].append(acc_inf)
+        print(f"[INFO] {idx + 1}/{total_images} 처리 중: {file_name}")
 
-        progress = (idx + 1) / total_images * 100
-        print(f"[INFO] {idx + 1}/{total_images} ({progress:.2f}%) - {file_name} 처리 중...")
-
+    output_txt = os.path.join(data_path, 'accuracy.txt')
     with open(output_txt, 'w') as f:
-        total_pred, total_inf, count = 0, 0, 0
+        total_pred, total_post, count = 0, 0, 0
 
-        f.write(f"{'Class':<20} | {'Inference':>9} | {'Pred':>7} | {'Diff':>7}\n")
-        f.write("-" * 55 + "\n")
+        f.write(f"{'Class':<32} | {'Pred':>10} | {'Post':>10} | {'Diff':>8}\n")
+        f.write("-" * 64 + "\n")
 
         for class_id in sorted(class_acc_pred.keys()):
             avg_pred = np.mean(class_acc_pred[class_id])
-            avg_inf = np.mean(class_acc_inf[class_id])
-            delta = avg_pred - avg_inf
+            avg_post = np.mean(class_acc_post[class_id])
+            diff = avg_post - avg_pred
 
             class_name = CLASS_NAMES[class_id]
-            f.write(f"{class_name:<20} | {avg_inf:9.4f} | {avg_pred:7.4f} | {delta:+7.4f}\n")
+            f.write(f"{class_name:<32} | {avg_pred:10.4f} | {avg_post:10.4f} | {diff:+8.4f}\n")
 
-            print(f"{class_name:<20} | {avg_inf:.4f} | {avg_pred:.4f} | {delta:+.4f}")
+            print(f"{class_name:<32} | {avg_pred:.4f} | {avg_post:.4f} | {diff:+.4f}")
 
             total_pred += avg_pred
-            total_inf += avg_inf
+            total_post += avg_post
             count += 1
 
         mean_pred = total_pred / count if count > 0 else 0
-        mean_inf = total_inf / count if count > 0 else 0
-        mean_diff = mean_pred - mean_inf
+        mean_post = total_post / count if count > 0 else 0
+        mean_diff = mean_post - mean_pred
 
-        f.write("-" * 55 + "\n")
-        f.write(f"{'Mean':<20} | {mean_inf:9.4f} | {mean_pred:7.4f} | {mean_diff:+7.4f}\n")
+        f.write("-" * 64 + "\n")
+        f.write(f"{'Mean':<32} | {mean_pred:10.4f} | {mean_post:10.4f} | {mean_diff:+8.4f}\n")
 
-        print(f"\n[RESULT] Mean Accuracy Diff (pred - inference): {mean_diff:+.4f}")
+        print(f"\n[RESULT] Mean Accuracy Diff (Post - Pred): {mean_diff:+.4f}")
         print(f"[INFO] 결과가 저장되었습니다: {output_txt}")
 
 
 def main():
-    gt_folder = "/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/annotation/validation"
-    inference_folder = "/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/pred_images"
-    # pred_folder = "/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/post_processing_inference"
-    origin_folder = "/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/images"
-
-    # pred_folder = "/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/accuracy_img/250707_neighbor_lane"
-    pred_folder = "/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/accuracy_img/250707_only_findoverlap"
-
-    output_txt = "/home/humpback/youn_ws/LaneDetector_rilab/dataset/mask2former/accuracy/accuracy_results.txt"
+    data_path = 'path'
 
     evaluate_class_accuracy(
-        gt_folder=gt_folder,
-        inference_folder=inference_folder,
-        pred_folder=pred_folder,
-        origin_folder=origin_folder,
-        output_txt=output_txt,
-        show_images=False,
-        save_dir='/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/result/compare_img'
+        data_path=data_path,
+        show_images=False,  # OpenCV 창 표시 여부
+        save_images=True    # 이미지 저장 여부
     )
 
 
