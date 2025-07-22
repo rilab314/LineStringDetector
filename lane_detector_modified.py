@@ -13,15 +13,15 @@ METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
     {'id': 1, 'name': 'center_line', 'color': (77, 77, 255)},
     {'id': 2, 'name': 'u_turn_zone_line', 'color': (77, 178, 255)},
-    {'id': 3, 'name': 'lane_line', 'color': (77, 255, 77)}, # 제외
-    {'id': 4, 'name': 'bus_only_lane', 'color': (255, 153, 77)}, # 제외
-    {'id': 5, 'name': 'edge_line', 'color': (255, 77, 77)}, # 제외
+    {'id': 3, 'name': 'lane_line', 'color': (77, 255, 77)},
+    {'id': 4, 'name': 'bus_only_lane', 'color': (255, 153, 77)},
+    {'id': 5, 'name': 'edge_line', 'color': (255, 77, 77)},
     {'id': 6, 'name': 'path_change_restriction_line', 'color': (178, 77, 255)},
     {'id': 7, 'name': 'no_parking_stopping_line', 'color': (77, 255, 178)},
-    {'id': 8, 'name': 'guiding_line', 'color': (255, 178, 77)}, # 제외
+    {'id': 8, 'name': 'guiding_line', 'color': (255, 178, 77)},
     {'id': 9, 'name': 'stop_line', 'color': (77, 102, 255)},
-    {'id': 10, 'name': 'safety_zone', 'color': (255, 77, 128)}, # 제외
-    {'id': 11, 'name': 'bicycle_lane', 'color': (128, 255, 77)}, # 제외
+    {'id': 10, 'name': 'safety_zone', 'color': (255, 77, 128)},
+    {'id': 11, 'name': 'bicycle_lane', 'color': (128, 255, 77)},
 ]
 
 
@@ -32,6 +32,7 @@ class LineString:
     class_id: int
     points: np.ndarray = None  # 원본 선상의 샘플링된 점들 (N,2)
     ext_points: np.ndarray = None  # 양쪽으로 확장된 선상의 점들 ((N+M),2)
+    origin_points: np.ndarray = None  # 기본 segmentation 이미지의 샘플링 포인트 (N,2)
     src_range: Tuple[int, int] = None  # ext_points 내에서 원래 points가 차지하는 인덱스 범위
     length: float = 0  # 선의 길이 (유클리드 누적거리)
 
@@ -50,10 +51,10 @@ class LineStringDetector:
         self._debug_imgs = {}
 
     def detect_line_strings(self):
-        result_path = os.path.join(self._data_path, 'result')
-        os.makedirs(result_path, exist_ok=True)
+        post_processing_path = os.path.join(self._data_path, 'post_processing')
+        os.makedirs(post_processing_path, exist_ok=True)
         # data_path 내의 모든 png 이미지에 대해 처리
-        file_list = glob.glob(os.path.join(self._data_path, 'images', '*.png'))
+        file_list = glob.glob(os.path.join(self._data_path, 'images', 'validation', '*.png'))
         file_list.sort()
         file_list = file_list[2:]
         for i, file_name in enumerate(file_list[4:]):
@@ -86,15 +87,16 @@ class LineStringDetector:
                 self._imshow.show(self._debug_imgs[key], key)
             self._imshow.show(self._debug_imgs[key], key, wait_ms=0)
             save_img = self._draw_colored_lines(save_img, line_string_list)
-            result_file = file_name.replace('images', 'result').replace('.npy', '.png')
-            cv2.imwrite(result_file, save_img)
+            post_processing_file = file_name.replace('images/validation', 'post_processing').replace('.npy', '.png')
+            cv2.imwrite(post_processing_file, save_img)
 
     def _read_image(self, img_file: str):
         image = cv2.imread(img_file)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self._imshow.show(image, 'image')
-        pred_file = img_file.replace('/images', '/pred_images')
+        pred_file = img_file.replace('/images/validation', '/pred_images')
         pred_img = cv2.imread(pred_file)
-        pred_img = cv2.cvtColor(pred_img, cv2.COLOR_RGB2BGR)
+        pred_img = cv2.cvtColor(pred_img, cv2.COLOR_BGR2RGB)
         self._imshow.show(pred_img, 'segmentation')
         return image, pred_img
 
@@ -334,7 +336,7 @@ class LineStringDetector:
 
 
 def main():
-    data_path = '/media/dolphin/My Book/Ongoing/lanedetector'
+    data_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/satellite_ade20k_250721 (copy)'
     line_detector = LineStringDetector(data_path)
     line_detector.detect_line_strings()
 

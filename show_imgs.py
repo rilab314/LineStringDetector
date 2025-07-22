@@ -8,7 +8,6 @@ class ImageShow:
     title_pad = 25
 
     def __init__(self, window_title: str, columns: int, scale: float = 1.0, enabeled=False):
-        self.save_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/class_img'
         self._window_title = window_title
         self._columns = columns
         self._scale = scale
@@ -22,26 +21,10 @@ class ImageShow:
         if not self._enabeled:
             if dilate:
                 image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
-            label_image = image.copy()
             self._titled_imgs[title] = image
             image = self.update_whole_image()
             image = self.scale_image(image)
-            if file_name is not None and class_id is None:
-                file_only = os.path.basename(file_name)
-                file_png = os.path.splitext(file_only)[0] + ".png"
-                folder_path = os.path.join(self.save_path, 'all_class_merged')
-                if not os.path.exists(folder_path):
-                    os.makedirs(folder_path)
-                cv2.imwrite(os.path.join(folder_path, file_png), label_image)
-
-            if file_name is not None and class_id is not None:
-                file_only = os.path.basename(file_name)
-                file_png = os.path.splitext(file_only)[0] + ".png"
-                folder_path = os.path.join(self.save_path, str(class_id))
-                if not os.path.exists(folder_path):
-                    os.makedirs(folder_path)
-                cv2.imwrite(os.path.join(folder_path, file_png), image)
-
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             cv2.imshow(self._window_title, image)
             if wait_ms is not None:
                 cv2.waitKey(wait_ms)
