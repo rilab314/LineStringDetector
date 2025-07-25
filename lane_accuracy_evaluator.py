@@ -164,12 +164,12 @@ def evaluate_class_accuracy(data_path, show_images=True, save_images=True):
 
 
 def main():
-    data_path = 'path'
+    data_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/satellite_ade20k_250206'
 
     evaluate_class_accuracy(
         data_path=data_path,
-        show_images=False,  # OpenCV 창 표시 여부
-        save_images=True    # 이미지 저장 여부
+        show_images=True,  # OpenCV 창 표시 여부
+        save_images=False    # 이미지 저장 여부
     )
 
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from skimage.feature import peak_local_max
 from scipy.interpolate import interp1d
 from show_imgs import ImageShow
+import config as cfg
 
 METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
@@ -45,9 +46,10 @@ class LineStringDetector:
     def __init__(self, data_path: str):
         self._data_path = data_path
         self._img_shape = (100, 100)
-        self._pallette = [METAINFO[i]['color'] for i in range(len(METAINFO))]
+        self._palette = [info['color'][::-1] for info in METAINFO]
         self._id_count = 0
-        self._imshow = ImageShow('images', columns=4, scale=0.6)
+        self._imshow_base = ImageShow('base images', columns=3, scale=0.6, enabled=True)
+        self._imshow_proc = ImageShow('processing images', columns=3, scale=0.6, enabled=True)
         self._debug_imgs = {}
 
     def detect_line_strings(self):
@@ -62,45 +64,52 @@ class LineStringDetector:
             image, pred_img = self._read_image(file_name)
             self._img_shape = image.shape[:2]
             self._id_count = self.id_offset
-            save_img = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
-            line_string_list = []
-            self._debug_imgs = {}
-            for iter_count in range(2):
-                self._debug_imgs.update({
-                    f'before_merge_{iter_count}': np.zeros_like(image),
-                    f'after_merge_{iter_count}': np.zeros_like(image),
-                    f'before_merge_ext_{iter_count}': np.zeros_like(image)
-                })
 
-            # seg_img의 채널마다 (예: 차선 클래스별) 처리
-            for class_id in range(1, len(METAINFO)):
-            # for class_id in [1, 2, 4, 5, 7, 8, 9]:
-                pred_class_map = np.all(pred_img == METAINFO[class_id]['color'], axis=-1).astype(np.uint8)
-                line_map, line_strings = self._thin_image(pred_class_map, class_id)
-                ext_lines = self._extend_lines(line_map, line_strings)
-                merged_lines = self._merge_lines(ext_lines)
-                merged_lines = self._merge_lines(merged_lines, iter_count=1)
-                line_string_list.extend(merged_lines)
-            
-            print('for loop end')
-            for key in self._debug_imgs:
-                self._imshow.show(self._debug_imgs[key], key)
-            self._imshow.show(self._debug_imgs[key], key, wait_ms=0)
-            save_img = self._draw_colored_lines(save_img, line_string_list)
-            post_processing_file = file_name.replace('images/validation', 'post_processing').replace('.npy', '.png')
-            cv2.imwrite(post_processing_file, save_img)
+            line_strings = self.extract_lines(pred_img)
+            line_strings = self.merge_lines(line_strings, 0)
+            line_strings = self.merge_lines(line_strings, 1)
+            self._imshow_proc.display(0)
 
     def _read_image(self, img_file: str):
         image = cv2.imread(img_file)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        self._imshow.show(image, 'image')
-        pred_file = img_file.replace('/images/validation', '/pred_images')
+        print('image file', img_file)
+        pred_file = img_file.replace('/images/', '/prediction/')
         pred_img = cv2.imread(pred_file)
-        pred_img = cv2.cvtColor(pred_img, cv2.COLOR_BGR2RGB)
-        self._imshow.show(pred_img, 'segmentation')
+        anno_file = img_file.replace('/images/', '/color_annotations/')
+        anno_img = cv2.imread(anno_file)
+        images = {'image': image, 'GT_img': anno_img, 'pred_img': pred_img}
+        self._imshow_base.show_imgs(images, wait_ms=0)
         return image, pred_img
+    
+    def extract_lines(self, pred_img: np.ndarray) -> List[LineString]:
+        line_string_list = []
+        for class_id, color in enumerate(self._palette):
+            # for class_id in [1, 2, 4, 5, 7, 8, 9]:
+            pred_class_map = np.all(pred_img == color, axis=-1).astype(np.uint8)
+            line_map, line_strings = self._thin_image(pred_class_map, class_id)
+            ext_lines = self._extend_lines(line_map, line_strings)
+            line_string_list.extend(ext_lines)
+        
+        line_img = np.zeros_like(pred_img)
+        line_img = self._draw_colored_lines(line_img, line_string_list)
+        self._imshow_proc.show(line_img, 'extracted lines')
+        return line_string_list
+    
+    def merge_lines(self, src_line_strings: List[LineString], iter: int) -> List[LineString]:
+        dst_line_strings = []
+        print(f'=========== [merge_lines] iter={iter}, src_line_strings: {len(src_line_strings)}')
+        for class_id, color in enumerate(self._palette):
+            class_line_strings = [line for line in src_line_strings if line.class_id == class_id]
+            merged_lines = self._merge_lines_by_class(class_line_strings, iter_count=1)
+            print(f'[merge_lines] class_id={class_id}, src lines={len(class_line_strings)}, merged={len(merged_lines)}')
+            dst_line_strings.extend(merged_lines)
 
-    def _thin_image(self, seg_map: np.ndarray, class_id: int) -> np.ndarray:
+        line_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
+        line_img = self._draw_colored_lines(line_img, dst_line_strings)
+        self._imshow_proc.show(line_img, f'merged_lines_{iter}', wait_ms=0)
+        return dst_line_strings
+
+    def _thin_image(self, seg_map: np.ndarray, class_id: int):
         print(f'----- [thin_image] -----')
         line_strings = []
         line_map = np.zeros_like(seg_map, dtype=np.int32)
@@ -127,9 +136,7 @@ class LineStringDetector:
             line_map[line_img > 0] = fill_value
             line_strings.append(LineString(id=fill_value, class_id=class_id, peak=(x, y)))
             fill_value += 1
-            
-            # vis_img = (line_map * 10).astype(np.uint8)
-        
+
         return line_map.astype(np.uint8), line_strings
 
     def _extend_lines(self, line_map: np.ndarray, line_strings: List[LineString]) -> List[LineString]:
@@ -192,7 +199,6 @@ class LineStringDetector:
 
     def _extrapolate_line(self, line_string: LineString, extend_len: int, stride: int) -> LineString:
         points = line_string.points  # (N,2) 배열
-        # 1) 머리 방향 벡터(head_dir)와 꼬리 방향 벡터(tail_dir) 계산
         head_dir = points[1] - points[0]
         head_dir = head_dir / np.linalg.norm(head_dir)
         tail_dir = points[-1] - points[-2]
@@ -214,17 +220,80 @@ class LineStringDetector:
         line_string.src_range = (n_head, n_head + len(points) - 1)
         return line_string
 
-    def _merge_lines(self, line_strings: List[LineString], iter_count: int = 0) -> List[LineString]:
-        if len(line_strings) == 0:
-            print('[merge_lines] line_strings is empty')
-            return []
-        print(f'----- [merge_lines] -----')
-        before_merge = self._draw_line_strings(line_strings, color=METAINFO[line_strings[0].class_id]['color'])
-        self._debug_imgs[f'before_merge_{iter_count}'] = cv2.add(self._debug_imgs[f'before_merge_{iter_count}'], before_merge)
-        before_merge_extended = self._draw_line_strings(line_strings, extend=True, color=METAINFO[line_strings[0].class_id]['color'])
-        self._debug_imgs[f'before_merge_ext_{iter_count}'] = cv2.add(self._debug_imgs[f'before_merge_ext_{iter_count}'], before_merge_extended)
+    def _detect_lines(self, line_strings: List[LineString]) -> List[LineString]:
+        origin_center_lines = []
+        origin_lane_lines = []
+        probe_max_len = 30
+        start_len = 5
+        tolerance = 1
 
         for line in line_strings:
+            if line.class_id == 1:
+                origin_center_lines.append(line)
+            if line.class_id == 3:
+                origin_lane_lines.append(line)
+
+        center_line_img = self._draw_line_strings(origin_center_lines, origin=True)
+        lane_line_img = self._draw_line_strings(origin_lane_lines, origin=True)
+
+        mask = np.any(center_line_img != 0, axis=-1)
+        center_line_img[mask] = np.clip(center_line_img[mask].astype(int) + 100, 0, 255).astype(np.uint8)
+        mask = np.any(lane_line_img != 0, axis=-1)
+        lane_line_img[mask] = np.clip(lane_line_img[mask].astype(int) + 100, 0, 255).astype(np.uint8)
+
+        normal_vector_img = np.zeros_like(center_line_img, dtype=np.uint8)
+
+        for line in origin_center_lines:
+            points = line.origin_points
+            if len(points) < 2:
+                continue
+            N = len(points)
+            normals = np.zeros_like(points, dtype=np.float32)
+            for i in range(N):
+                if i == 0:
+                    tangent = points[i + 1] - points[i]
+                elif i == N - 1:
+                    tangent = points[i] - points[i - 1]
+                else:
+                    tangent = points[i + 1] - points[i - 1]
+                norm = np.linalg.norm(tangent)
+                if norm < 1e-6:
+                    continue
+                unit_tangent = tangent / norm
+                normal_vec = np.array([-unit_tangent[1], unit_tangent[0]])
+                normals[i] = normal_vec
+
+            for i in range(N):
+                p = points[i].astype(int)
+                n = normals[i]
+                if np.linalg.norm(n) < 1e-6:
+                    continue
+                for side, color in zip([-1, 1], [(255, 200, 0), (0, 255, 255)]):
+                    for t in range(start_len, probe_max_len + 1):
+                        probe_pt = (p + side * n * t).astype(int)
+                        x, y = probe_pt
+                        if not (0 <= x < lane_line_img.shape[1] and 0 <= y < lane_line_img.shape[0]):
+                            continue
+                        roi = lane_line_img[max(0, y - tolerance):y + tolerance + 1,
+                              max(0, x - tolerance):x + tolerance + 1]
+                        if np.any(roi != 0):
+                            cv2.circle(normal_vector_img, (x, y), 2, color, -1)
+
+        origin_img = cv2.addWeighted(center_line_img, 1.0, lane_line_img, 1.0, 0)
+        origin_img = cv2.addWeighted(origin_img, 1.0, normal_vector_img, 1.0, 0)
+        cv2.imshow('detected_lane_points_by_probe', origin_img)
+        cv2.waitKey(0)
+        print('======== next line ========')
+        return line_strings
+
+    def _merge_lines_by_class(self, line_strings: List[LineString], iter_count: int = 0) -> List[LineString]:
+        if len(line_strings) == 0:
+            print('[merge_lines_class] line_strings is empty')
+            return []
+        print(f'----- [merge_lines_class] -----')
+        for line in line_strings:
+            if line.class_id == 3:
+                continue
             overlap_ids = self._find_overlap(line_strings, line)
             if len(overlap_ids) == 0:
                 continue
@@ -245,8 +314,6 @@ class LineStringDetector:
 
         # id가 None이 아닌 선들만 남김
         line_strings = [line for line in line_strings if line.id is not None]
-        after_merge = self._draw_line_strings(line_strings, color=METAINFO[line_strings[0].class_id]['color']) 
-        self._debug_imgs[f'after_merge_{iter_count}'] = cv2.add(self._debug_imgs[f'after_merge_{iter_count}'], after_merge)
         return line_strings
 
     def _find_overlap(self, line_strings: List[LineString], this_line: LineString) -> Set[int]:
@@ -260,8 +327,8 @@ class LineStringDetector:
         label_map = dilated_map if dilated_map.ndim == 2 else dilated_map[:, :, 0]
 
         orig_lines = self._draw_line_strings(line_strings)
-        # self._imshow.show(orig_lines, 'orig_lines', offset=100)
-        # self._imshow.show(dilated_map, 'dilated_map', offset=100)
+        # self._imshow_proc.show(orig_lines, 'orig_lines', offset=100)
+        # self._imshow_proc.show(dilated_map, 'dilated_map', offset=100)
 
         line_img = np.zeros_like(dilated_map, dtype=np.uint8)
         pts = this_line.ext_points.reshape((-1, 1, 2))
@@ -281,7 +348,7 @@ class LineStringDetector:
         line_string_map = dilated_map.copy()
         line_string_map[line_string_map > 0] = 255
         cv2.polylines(line_string_map, [pts], isClosed=False, color=(0, 0, 255), thickness=3)
-        # self._imshow.show(line_string_map, 'line_string_map', wait_ms=0)
+        # self._imshow_proc.show(line_string_map, 'line_string_map', wait_ms=0)
         return label_ids
 
     def _connect_tail2head(self, line, oppo_line):
@@ -302,13 +369,15 @@ class LineStringDetector:
         cv2.line(image, endpoints[0], endpoints[1], color=color, thickness=2)
         return image
 
-    def _draw_line_strings(self, line_strings: List[LineString], extend=False, color=None):
+    def _draw_line_strings(self, line_strings: List[LineString], extend=False, origin=False, color=None):
         image = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
         for line in line_strings:
             if line.id is None or line.points is None:
                 continue
             if extend:
                 pts = line.ext_points.reshape((-1, 1, 2))
+            if origin:
+                pts = line.origin_points.reshape((-1, 1, 2))
             else:
                 pts = line.points.reshape((-1, 1, 2))
             line_color = (line.id, line.id, line.id) if color is None else color
@@ -329,15 +398,14 @@ class LineStringDetector:
             if line.id is None:
                 continue
             pts = line.points.reshape((-1, 1, 2))
-            color = METAINFO[line.class_id]['color']
+            color = self._palette[line.class_id]
             cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
         cv2.cvtColor(image, cv2.COLOR_RGB2BGR, image)
         return image
 
 
 def main():
-    data_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/satellite_ade20k_250721 (copy)'
-    line_detector = LineStringDetector(data_path)
+    line_detector = LineStringDetector(cfg.DATA_PATH)
     line_detector.detect_line_strings()
 
 if __name__ == '__main__':

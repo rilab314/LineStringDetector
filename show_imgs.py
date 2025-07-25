@@ -1,36 +1,50 @@
 import cv2
 import os
 import numpy as np
+from typing import Dict
 
 
 class ImageShow:
     pad = 10
     title_pad = 25
 
-    def __init__(self, window_title: str, columns: int, scale: float = 1.0, enabeled=False):
+    def __init__(self, window_title: str, columns: int, scale: float = 1.0, enabled=False):
         self._window_title = window_title
         self._columns = columns
         self._scale = scale
         self._titled_imgs = {}
-        self._enabeled = enabeled
+        self._enabled = enabled
 
-    def show(self, image: np.ndarray, title: str, wait_ms: int = None, scale: float = 1.0, offset: int = 0, dilate: bool = False, file_name: str = None, class_id: int = None):
+    def show_imgs(self, images: Dict[str, np.ndarray], wait_ms: int = None, scale: float = 1.0, offset: int = 0, dilate: bool = False):
+        for key, img in images.items():
+            print('key', key, img.shape)
+            self.show(img, key, None, scale, offset, dilate)
+        if wait_ms is not None:
+            cv2.waitKey(wait_ms)
+
+    def show(self, image: np.ndarray, title: str, wait_ms: int = None, scale: float = 1.0, offset: int = 0, dilate: bool = False):
         image = (image.copy() * scale).astype(np.uint8)
         if offset > 0:
             image[image > 0] = np.clip(image[image > 0].astype(int) + offset, 0, 255).astype(image.dtype)
-        if not self._enabeled:
-            if dilate:
-                image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
-            self._titled_imgs[title] = image
+        if dilate:
+            image = cv2.dilate(image, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8), iterations=1)
+        self._titled_imgs[title] = image
+
+        if self._enabled:
             image = self.update_whole_image()
             image = self.scale_image(image)
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             cv2.imshow(self._window_title, image)
             if wait_ms is not None:
                 cv2.waitKey(wait_ms)
-    
+
+    def display(self, wait_ms: int):
+        image = self.update_whole_image()
+        image = self.scale_image(image)
+        cv2.imshow(self._window_title, image)
+        cv2.waitKey(wait_ms)
+
     def remove(self, title, wait_ms: int = 0):
-        if not self._enabeled:
+        if not self._enabled:
             if isinstance(title, str):
                 if title in self._titled_imgs:
                     del self._titled_imgs[title]
