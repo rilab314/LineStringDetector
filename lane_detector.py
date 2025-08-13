@@ -3,10 +3,11 @@ import glob
 
 import cv2
 import numpy as np
-from typing import List, Tuple, Set
+import json
+from pycocotools import mask as maskUtils
+from typing import List, Tuple, Set, Dict
 from dataclasses import dataclass
-from skimage.feature import peak_local_max
-from scipy.interpolate import interp1d
+
 from show_imgs import ImageShow
 import config as cfg
 
@@ -33,7 +34,6 @@ class LineString:
     class_id: int
     points: np.ndarray = None  # 원본 선상의 샘플링된 점들 (N,2)
     ext_points: np.ndarray = None  # 양쪽으로 확장된 선상의 점들 ((N+M),2)
-    origin_points: np.ndarray = None  # 기본 segmentation 이미지의 샘플링 포인트 (N,2)
     src_range: Tuple[int, int] = None  # ext_points 내에서 원래 points가 차지하는 인덱스 범위
     length: float = 0  # 선의 길이 (유클리드 누적거리)
 
@@ -42,6 +42,7 @@ class LineStringDetector:
     id_offset = 10  # peak ID의 최소 오프셋
     sample_stride = 10  # 샘플링 간격 (픽셀)
     extend_len = 20  # 선 확장 길이 (픽셀)
+    overlap_thresh = 2  # 겹치는 픽셀 수
 
     def __init__(self, data_path: str):
         self._data_path = data_path
@@ -51,41 +52,59 @@ class LineStringDetector:
         self._id_count = 0
         self._imshow_base = ImageShow('base images', columns=3, scale=0.8, enabled=True)
         self._imshow_proc = ImageShow('processing images', columns=3, scale=0.8, enabled=True)
+        self._imshow_save = ImageShow('save images', columns=3, scale=1, enabled=True)
+        # self._exclude_classes = [0, 3, 8, 10]
+        self._exclude_classes = [0]
         self._debug_imgs = {}
 
     def detect_line_strings(self):
-        post_processing_path = os.path.join(self._data_path, 'post_processing')
-        os.makedirs(post_processing_path, exist_ok=True)
-        # data_path 내의 모든 png 이미지에 대해 처리
         file_list = glob.glob(os.path.join(self._data_path, 'images', 'validation', '*.png'))
         file_list.sort()
-        file_list = file_list[2:]
-        for i, file_name in enumerate(file_list[4:]):
-            print(f'===== [file_name] ===== {i} / {len(file_list)} {file_name}')
-            image, pred_img = self._read_image(file_name)
+        origin_json = []
+        pred_json = []
+        pred_excepted_json = []
+        for i, file_name in enumerate(file_list):
+            print(f'===== [file_name] ===== {i} / {len(file_list)}, file:{file_name}')
+            image, pred_img, anno_img = self._read_image(file_name)
             self._img_shape = image.shape[:2]
             self._id_count = self.id_offset
 
-            line_strings = self.extract_lines(pred_img)
-            line_strings = self.merge_lines(line_strings, 0)
-            line_strings = self.merge_lines(line_strings, 1)
-            self._imshow_proc.display(0)
+            origin_line_strings, line_img_raw = self.extract_lines(pred_img)
+            line_strings, line_img_merged = self.merge_lines(origin_line_strings, 0)
+            line_strings, line_img_merged = self.merge_lines(line_strings, 1)
+            line_strings_excepted, line_img_excepted = self._except_short_lines(line_strings)
+
+            images_to_save = {'src_img': image, 'anno_img': anno_img, 'pred_img': pred_img,
+                              'raw_line': line_img_raw, 'merged_line': line_img_merged, 'long_line': line_img_excepted}
+            self.save_images(images_to_save, file_name)
+            image_id = os.path.basename(file_name).replace('.png', '')
+            origin_json = self.accumulate_preds(origin_line_strings, image_id, origin_json)
+            pred_json = self.accumulate_preds(line_strings, image_id, pred_json)
+            pred_excepted_json = self.accumulate_preds(line_strings_excepted, image_id, pred_excepted_json)
+            self._imshow_proc.display(10)
+
+        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_origin.json'), 'w') as f:
+            json.dump(origin_json, f)
+        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_merged.json'), 'w') as f:
+            json.dump(pred_json, f)
+        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_excepted.json'), 'w') as f:
+            json.dump(pred_excepted_json, f)
 
     def _read_image(self, img_file: str):
         image = cv2.imread(img_file)
         print('image file', img_file)
-        pred_file = img_file.replace('/images/', '/prediction/')
+        pred_file = img_file.replace('/images/validation', '/prediction/')
         pred_img = cv2.imread(pred_file)
         anno_file = img_file.replace('/images/', '/color_annotations/')
         anno_img = cv2.imread(anno_file)
         images = {'image': image, 'GT_img': anno_img, 'pred_img': pred_img}
         self._imshow_base.show_imgs(images)
-        return image, pred_img
+        return image, pred_img, anno_img
     
-    def extract_lines(self, pred_img: np.ndarray) -> List[LineString]:
+    def extract_lines(self, pred_img: np.ndarray) -> Tuple[List[LineString], np.ndarray]:
         line_string_list = []
         for class_id, color in enumerate(self._palette):
-            if class_id == 0:
+            if class_id in self._exclude_classes:
                 continue
             # for class_id in [1, 2, 4, 5, 7, 8, 9]:
             pred_class_map = np.all(pred_img == color, axis=-1).astype(np.uint8)
@@ -94,15 +113,15 @@ class LineStringDetector:
             line_string_list.extend(ext_lines)
         
         line_img = np.zeros_like(pred_img)
-        line_img = self._draw_colored_lines(line_img, line_string_list)
+        line_img = self._draw_colored_lines(line_img, line_string_list, extended=True)
         self._imshow_proc.show(line_img, 'extracted lines')
-        return line_string_list
+        return line_string_list, line_img
     
-    def merge_lines(self, src_line_strings: List[LineString], iter: int) -> List[LineString]:
+    def merge_lines(self, src_line_strings: List[LineString], iter: int) -> Tuple[List[LineString], np.ndarray]:
         dst_line_strings = []
         print(f'=========== [merge_lines] iter={iter}, src_line_strings: {len(src_line_strings)}')
         for class_id, color in enumerate(self._palette):
-            if class_id in [0, 3]:
+            if class_id in self._exclude_classes:
                 continue
             class_line_strings = [line for line in src_line_strings if line.class_id == class_id]
             merged_lines = self._merge_lines_by_class(class_line_strings, iter_count=1)
@@ -112,7 +131,7 @@ class LineStringDetector:
         line_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
         line_img = self._draw_colored_lines(line_img, dst_line_strings)
         self._imshow_proc.show(line_img, f'merged_lines_{iter}')
-        return dst_line_strings
+        return dst_line_strings, line_img
 
     def _thin_image(self, seg_map: np.ndarray, class_id: int):
         print(f'----- [thin_image] -----')
@@ -152,7 +171,7 @@ class LineStringDetector:
             # 해당 라벨만 추출한 바이너리 이미지
             line_img = (line_map == line_string.id).astype(np.uint8)
             line_string.points = self._sample_points(line_img, self.sample_stride)
-            if line_string.points.shape[0] < 3:
+            if line_string.points.shape[0] < 2:
                 line_string.id = None
                 continue
             line_string.length = np.sum(np.linalg.norm(np.diff(line_string.points, axis=0), axis=1))
@@ -204,13 +223,16 @@ class LineStringDetector:
 
     def _extrapolate_line(self, line_string: LineString, extend_len: int, stride: int) -> LineString:
         points = line_string.points  # (N,2) 배열
-        head_dir = points[1] - points[0]
+        N = len(points)
+        head_prev_idx = min(max(N // 3, 3), N - 1)
+        head_dir = points[0] - points[head_prev_idx]
         head_dir = head_dir / np.linalg.norm(head_dir)
-        tail_dir = points[-1] - points[-2]
+        tail_prev_idx = N - 1 - min(max(N // 3, 3), N - 1)
+        tail_dir = points[-1] - points[tail_prev_idx]
         tail_dir = tail_dir / np.linalg.norm(tail_dir)
         n_head = extend_len // stride
         head_ext = np.array([
-            points[0] - head_dir * stride * i
+            points[0] + head_dir * stride * i
             for i in range(1, n_head + 1)
         ])
         n_tail = extend_len // stride
@@ -225,77 +247,9 @@ class LineStringDetector:
         line_string.src_range = (n_head, n_head + len(points) - 1)
         return line_string
 
-    def _detect_lines(self, line_strings: List[LineString]) -> List[LineString]:
-        origin_center_lines = []
-        origin_lane_lines = []
-        probe_max_len = 30
-        start_len = 5
-        tolerance = 1
-
-        for line in line_strings:
-            if line.class_id == 1:
-                origin_center_lines.append(line)
-            if line.class_id == 3:
-                origin_lane_lines.append(line)
-
-        center_line_img = self._draw_line_strings(origin_center_lines, origin=True)
-        lane_line_img = self._draw_line_strings(origin_lane_lines, origin=True)
-
-        mask = np.any(center_line_img != 0, axis=-1)
-        center_line_img[mask] = np.clip(center_line_img[mask].astype(int) + 100, 0, 255).astype(np.uint8)
-        mask = np.any(lane_line_img != 0, axis=-1)
-        lane_line_img[mask] = np.clip(lane_line_img[mask].astype(int) + 100, 0, 255).astype(np.uint8)
-
-        normal_vector_img = np.zeros_like(center_line_img, dtype=np.uint8)
-
-        for line in origin_center_lines:
-            points = line.origin_points
-            if len(points) < 2:
-                continue
-            N = len(points)
-            normals = np.zeros_like(points, dtype=np.float32)
-            for i in range(N):
-                if i == 0:
-                    tangent = points[i + 1] - points[i]
-                elif i == N - 1:
-                    tangent = points[i] - points[i - 1]
-                else:
-                    tangent = points[i + 1] - points[i - 1]
-                norm = np.linalg.norm(tangent)
-                if norm < 1e-6:
-                    continue
-                unit_tangent = tangent / norm
-                normal_vec = np.array([-unit_tangent[1], unit_tangent[0]])
-                normals[i] = normal_vec
-
-            for i in range(N):
-                p = points[i].astype(int)
-                n = normals[i]
-                if np.linalg.norm(n) < 1e-6:
-                    continue
-                for side, color in zip([-1, 1], [(255, 200, 0), (0, 255, 255)]):
-                    for t in range(start_len, probe_max_len + 1):
-                        probe_pt = (p + side * n * t).astype(int)
-                        x, y = probe_pt
-                        if not (0 <= x < lane_line_img.shape[1] and 0 <= y < lane_line_img.shape[0]):
-                            continue
-                        roi = lane_line_img[max(0, y - tolerance):y + tolerance + 1,
-                              max(0, x - tolerance):x + tolerance + 1]
-                        if np.any(roi != 0):
-                            cv2.circle(normal_vector_img, (x, y), 2, color, -1)
-
-        origin_img = cv2.addWeighted(center_line_img, 1.0, lane_line_img, 1.0, 0)
-        origin_img = cv2.addWeighted(origin_img, 1.0, normal_vector_img, 1.0, 0)
-        cv2.imshow('detected_lane_points_by_probe', origin_img)
-        cv2.waitKey(0)
-        print('======== next line ========')
-        return line_strings
-
     def _merge_lines_by_class(self, line_strings: List[LineString], iter_count: int = 0) -> List[LineString]:
         if len(line_strings) == 0:
-            print('[merge_lines_class] line_strings is empty')
             return []
-        print(f'----- [merge_lines_class] -----')
         for line in line_strings:
             overlap_ids = self._find_overlap(line_strings, line)
             if len(overlap_ids) == 0:
@@ -327,11 +281,7 @@ class LineStringDetector:
         line_strings_copy.remove(this_line)
         dilated_map = self._draw_line_strings(line_strings_copy, extend=True)
         dilated_map = cv2.dilate(dilated_map, np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8))
-        label_map = dilated_map if dilated_map.ndim == 2 else dilated_map[:, :, 0]
-
-        orig_lines = self._draw_line_strings(line_strings)
-        # self._imshow_proc.show(orig_lines, 'orig_lines', offset=100)
-        # self._imshow_proc.show(dilated_map, 'dilated_map', offset=100)
+        label_map = dilated_map.copy() if dilated_map.ndim == 2 else dilated_map[:, :, 0].copy()
 
         line_img = np.zeros_like(dilated_map, dtype=np.uint8)
         pts = this_line.ext_points.reshape((-1, 1, 2))
@@ -344,14 +294,9 @@ class LineStringDetector:
             return set()
         unique, counts = np.unique(overlap_labels, return_counts=True)
 
-        mask_cond = (unique != 0) & (unique != src_line_id) & (counts > 3)
+        mask_cond = (unique != 0) & (unique != src_line_id) & (counts > self.overlap_thresh)
         label_ids = set(unique[mask_cond].tolist())
         print(f'unique: {unique}, counts: {counts}, label_ids: {label_ids}')
-
-        line_string_map = dilated_map.copy()
-        line_string_map[line_string_map > 0] = 255
-        cv2.polylines(line_string_map, [pts], isClosed=False, color=(0, 0, 255), thickness=3)
-        # self._imshow_proc.show(line_string_map, 'line_string_map', wait_ms=0)
         return label_ids
 
     def _connect_tail2head(self, line, oppo_line):
@@ -372,15 +317,23 @@ class LineStringDetector:
         cv2.line(image, endpoints[0], endpoints[1], color=color, thickness=1)
         return image
 
-    def _draw_line_strings(self, line_strings: List[LineString], extend=False, origin=False, color=None):
+    def _except_short_lines(self, line_strings: List[LineString]) -> Tuple[List[LineString], np.ndarray]:
+        filtered_line_strings = []
+        for line in line_strings:
+            line.length = np.sum(np.linalg.norm(np.diff(line.points, axis=0), axis=1))
+            if line.length > 10:
+                filtered_line_strings.append(line)
+        line_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
+        line_img = self._draw_colored_lines(line_img, filtered_line_strings)
+        return filtered_line_strings, line_img
+
+    def _draw_line_strings(self, line_strings: List[LineString], extend=False, color=None):
         image = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
         for line in line_strings:
             if line.id is None or line.points is None:
                 continue
             if extend:
                 pts = line.ext_points.reshape((-1, 1, 2))
-            if origin:
-                pts = line.origin_points.reshape((-1, 1, 2))
             else:
                 pts = line.points.reshape((-1, 1, 2))
             line_color = (line.id, line.id, line.id) if color is None else color
@@ -395,15 +348,44 @@ class LineStringDetector:
         cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=2)
         return image
 
-    def _draw_colored_lines(self, pred_img, line_strings : List[LineString]):
+    def _draw_colored_lines(self, pred_img, line_strings : List[LineString], extended=False):
         image = pred_img.copy()
         for line in line_strings:
             if line.id is None:
                 continue
-            pts = line.points.reshape((-1, 1, 2))
             color = self._palette[line.class_id]
+            if extended:
+                pts = line.ext_points.reshape((-1, 1, 2))
+            else:
+                pts = line.points.reshape((-1, 1, 2))
             cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
         return image
+
+    def accumulate_preds(self, line_strings: List[LineString], image_id: str, pred_json: List[Dict]):
+        for line in line_strings:
+            mask = self._draw_single_line(line)
+            mask = (np.all(mask > 0, axis=-1)).astype(np.uint8)
+            mask = np.asfortranarray(mask)
+            rle = maskUtils.encode(mask)
+            if isinstance(rle['counts'], bytes):
+                rle['counts'] = rle['counts'].decode('utf-8')
+            prediction = {
+                "image_id": image_id,
+                "category_id": line.class_id,
+                "segmentation": rle,
+                "score": 1.,
+            }
+            pred_json.append(prediction)
+        return pred_json
+
+    def save_images(self, images_to_save, img_file):
+        self._imshow_save.show_imgs(images_to_save)
+        save_image = self._imshow_save.update_whole_image()
+        filename = img_file.replace('/images/validation', '/process/result')
+        if not os.path.exists(os.path.dirname(filename)):
+            os.makedirs(os.path.dirname(filename))
+        print('save filename:', filename)
+        cv2.imwrite(filename, save_image)
 
 
 def main():
