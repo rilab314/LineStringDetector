@@ -81,7 +81,7 @@ class LineStringDetector:
             origin_json = self.accumulate_preds(origin_line_strings, image_id, origin_json)
             pred_json = self.accumulate_preds(line_strings, image_id, pred_json)
             pred_excepted_json = self.accumulate_preds(line_strings_excepted, image_id, pred_excepted_json)
-            self._imshow_proc.display(10)
+            self._imshow_proc.display(1)
 
         with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_origin.json'), 'w') as f:
             json.dump(origin_json, f)
@@ -345,7 +345,7 @@ class LineStringDetector:
         if line_string.id is None or line_string.points is None:
             return image
         pts = line_string.points.reshape((-1, 1, 2))
-        cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=2)
+        cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=3)
         return image
 
     def _draw_colored_lines(self, pred_img, line_strings : List[LineString], extended=False):
