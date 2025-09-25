@@ -61,8 +61,10 @@ class LineStringDetector:
         file_list = glob.glob(os.path.join(self._data_path, 'images', 'validation', '*.png'))
         file_list.sort()
         origin_json = []
+        origin_excepted_json = []
         pred_json = []
         pred_excepted_json = []
+
         for i, file_name in enumerate(file_list):
             print(f'===== [file_name] ===== {i} / {len(file_list)}, file:{file_name}')
             image, pred_img, anno_img = self._read_image(file_name)
@@ -70,6 +72,7 @@ class LineStringDetector:
             self._id_count = self.id_offset
 
             origin_line_strings, line_img_raw = self.extract_lines(pred_img)
+            origin_line_strings_excepted, line_img_raw_excepted = self._except_short_lines(origin_line_strings)
             line_strings, line_img_merged = self.merge_lines(origin_line_strings, 0)
             line_strings, line_img_merged = self.merge_lines(line_strings, 1)
             line_strings_excepted, line_img_excepted = self._except_short_lines(line_strings)
@@ -79,15 +82,19 @@ class LineStringDetector:
             self.save_images(images_to_save, file_name)
             image_id = os.path.basename(file_name).replace('.png', '')
             origin_json = self.accumulate_preds(origin_line_strings, image_id, origin_json)
+            origin_excepted_json = self.accumulate_preds(origin_line_strings_excepted, image_id, origin_excepted_json)
             pred_json = self.accumulate_preds(line_strings, image_id, pred_json)
             pred_excepted_json = self.accumulate_preds(line_strings_excepted, image_id, pred_excepted_json)
             self._imshow_proc.display(1)
 
-        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_origin.json'), 'w') as f:
+
+        with open(os.path.join(self._data_path, 'results', 'coco_pred_instances_origin.json'), 'w') as f:
             json.dump(origin_json, f)
-        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_merged.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'results', 'coco_pred_instances_origin_excepted.json'), 'w') as f:
+            json.dump(origin_excepted_json, f)
+        with open(os.path.join(self._data_path, 'results', 'coco_pred_instances_merged.json'), 'w') as f:
             json.dump(pred_json, f)
-        with open(os.path.join(self._data_path, 'process', 'coco_pred_instances_excepted.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'results', 'coco_pred_instances_excepted.json'), 'w') as f:
             json.dump(pred_excepted_json, f)
 
     def _read_image(self, img_file: str):
@@ -140,6 +147,7 @@ class LineStringDetector:
         line_blobs = np.zeros_like(seg_map, dtype=np.int32)
         y, x = np.nonzero(seg_map)
         fill_value = self.id_offset
+
         for k, (y, x) in enumerate(zip(y, x)):
             if line_blobs[y, x] > 0:
                 continue
@@ -340,12 +348,12 @@ class LineStringDetector:
             cv2.polylines(image, [pts], isClosed=False, color=line_color, thickness=2)
         return image
 
-    def _draw_single_line(self, line_string : LineString, extend=False):
+    def _draw_single_line(self, line_string : LineString, thickness=None, extend=False):
         image = np.zeros((self._img_shape[0], self._img_shape[1], 3), dtype=np.uint8)
         if line_string.id is None or line_string.points is None:
             return image
         pts = line_string.points.reshape((-1, 1, 2))
-        cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=3)
+        cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=thickness)
         return image
 
     def _draw_colored_lines(self, pred_img, line_strings : List[LineString], extended=False):
@@ -361,9 +369,9 @@ class LineStringDetector:
             cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
         return image
 
-    def accumulate_preds(self, line_strings: List[LineString], image_id: str, pred_json: List[Dict]):
+    def accumulate_preds(self, line_strings: List[LineString], image_id: str, pred_json: List[dict]):
         for line in line_strings:
-            mask = self._draw_single_line(line)
+            mask = self._draw_single_line(line, 6)
             mask = (np.all(mask > 0, axis=-1)).astype(np.uint8)
             mask = np.asfortranarray(mask)
             rle = maskUtils.encode(mask)
@@ -381,7 +389,7 @@ class LineStringDetector:
     def save_images(self, images_to_save, img_file):
         self._imshow_save.show_imgs(images_to_save)
         save_image = self._imshow_save.update_whole_image()
-        filename = img_file.replace('/images/validation', '/process/result')
+        filename = img_file.replace('/images/validation', '/results/result')
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
         print('save filename:', filename)
@@ -389,7 +397,7 @@ class LineStringDetector:
 
 
 def main():
-    line_detector = LineStringDetector(cfg.DATA_PATH)
+    line_detector = LineStringDetector(cfg.WORK_PATH)
     line_detector.detect_line_strings()
 
 if __name__ == '__main__':
