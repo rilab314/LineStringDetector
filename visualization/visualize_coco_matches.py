@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 from pycocotools.coco import COCO
 from tqdm import tqdm
+import config as cfg
 
 
 class VisualComparator:
@@ -84,14 +85,15 @@ class VisualComparator:
         return overlay_image
 
 
-# ===================================================================
-# 아래는 클래스 사용 예시입니다. (image_dir 관련 부분 수정됨)
-# ===================================================================
-if __name__ == '__main__':
+
+def main():
     comparator = VisualComparator()
     comparator.compare(
-        gt_anno_file="/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/satellite_ade20k_250801/results/new_coco_dataset/annotations/instances_validation2017.json",
-        pred_anno_file="/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/satellite_ade20k_250801/results/coco_pred_instances_merged.json",
-        image_dir="/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/satellite_ade20k_250801/images/validation",  # 원본 이미지 디렉토리 경로 전달
-        save_path="/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/satellite_ade20k_250801/compare_categories",
+        gt_anno_file=cfg.COCO_ANNO_PATH,
+        pred_anno_file=cfg.MERGED_JSON_PATH,
+        image_dir=cfg.ORIGIN_PATH,  # 원본 이미지 디렉토리 경로 전달
+        save_path=os.path.join(cfg.RESULT_PATH, 'compare'),
     )
+
+if __name__ == '__main__':
+    main()
