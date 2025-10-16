@@ -41,7 +41,7 @@ class LineString:
 
 class LineStringDetector:
     id_offset = 10  # peak ID의 최소 오프셋
-    sample_stride = 10  # 샘플링 간격 (픽셀)
+    sample_stride = 5  # 샘플링 간격 (픽셀)
     extend_len = 20  # 선 확장 길이 (픽셀)
     overlap_thresh = 2  # 겹치는 픽셀 수
     thickness = 3
@@ -59,13 +59,6 @@ class LineStringDetector:
         self._exclude_classes = [0]
         self._debug_imgs = {}
 
-    def build(self):
-        for value in [3, 5]:
-            self.thickness = value
-            for value in [5, 10, 15]:
-                self.sample_stride = value
-                self.detect_line_strings()
-
     def detect_line_strings(self):
         file_list = glob.glob(os.path.join(self._data_path, 'images', 'validation', '*.png'))
         file_list.sort()
@@ -75,15 +68,44 @@ class LineStringDetector:
         pred_excepted_json = []
 
         for i, file_name in enumerate(tqdm(file_list)):
+            if i < 10:
+                continue
             print(f'===== [file_name] ===== {i} / {len(file_list)}, file:{file_name}')
             image, pred_img, anno_img = self._read_image(file_name)
             self._img_shape = image.shape[:2]
             self._id_count = self.id_offset
 
-            origin_line_strings, line_img_raw = self.extract_lines(pred_img)
+            img_name = os.path.basename(file_name)
+            img = np.zeros_like(pred_img)
+
+            origin_line_strings, line_img_raw = self.extract_lines(pred_img, file_name)
+            save_origin_img = img.copy()
+            origin_colorized_map = self._draw_colored_lines(save_origin_img, origin_line_strings)
+            origin_colorized_save_path = os.path.join(self._data_path, 'results', 'figure_4', 'c', img_name)
+            os.makedirs(os.path.dirname(origin_colorized_save_path), exist_ok=True)
+            cv2.imwrite(origin_colorized_save_path, origin_colorized_map)
+
+
+
             origin_line_strings_excepted, line_img_raw_excepted = self._except_short_lines(origin_line_strings)
             line_strings, line_img_merged = self.merge_lines(origin_line_strings, 0)
             line_strings, line_img_merged = self.merge_lines(line_strings, 1)
+
+            save_merged_map_img = img.copy()
+            merged_colorized_map = self._draw_colored_lines(save_merged_map_img, line_strings)
+            merged_colorized_save_path = os.path.join(self._data_path, 'results', 'figure_4', 'd', img_name)
+            os.makedirs(os.path.dirname(merged_colorized_save_path), exist_ok=True)
+            cv2.imwrite(merged_colorized_save_path, merged_colorized_map)
+
+
+
+            save_merged_img = img.copy()
+            colorlized_map = self._draw_colored_lines(save_merged_img, line_strings, select=1)
+            colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3', 'd', img_name)
+            os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
+            cv2.imwrite(colorlized_save_path, colorlized_map)
+
+
             line_strings_excepted, line_img_excepted = self._except_short_lines(line_strings)
 
             images_to_save = {'src_img': image, 'anno_img': anno_img, 'pred_img': pred_img,
@@ -116,7 +138,7 @@ class LineStringDetector:
         self._imshow_base.show_imgs(images)
         return image, pred_img, anno_img
     
-    def extract_lines(self, pred_img: np.ndarray) -> Tuple[List[LineString], np.ndarray]:
+    def extract_lines(self, pred_img: np.ndarray, file_name=None) -> Tuple[List[LineString], np.ndarray]:
         line_string_list = []
         for class_id, color in enumerate(self._palette):
             if class_id in self._exclude_classes:
@@ -125,12 +147,24 @@ class LineStringDetector:
             pred_class_map = np.all(pred_img == color, axis=-1).astype(np.uint8)
             line_map, line_strings = self._thin_image(pred_class_map, class_id)
 
-            # colorlized_map = self._draw_blobs_with_color(line_map)
-            # colorlized_save_path = os.path.join(self._data_path, )
-
+            if class_id == 1:
+                img_name = os.path.basename(file_name)
+                colorlized_map = self._draw_blobs_with_color(line_map)
+                colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3','b', img_name)
+                os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
+                cv2.imwrite(colorlized_save_path, colorlized_map)
 
             ext_lines = self._extend_lines(line_map, line_strings)
             line_string_list.extend(ext_lines)
+
+            if class_id == 1:
+                img_name = os.path.basename(file_name)
+                img = np.zeros_like(pred_img)
+                colorlized_map = self._draw_colored_lines(img, ext_lines, extended=True)
+                colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3', 'c', img_name)
+                os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
+                cv2.imwrite(colorlized_save_path, colorlized_map)
+
         
         line_img = np.zeros_like(pred_img)
         line_img = self._draw_colored_lines(line_img, line_string_list, extended=True)
@@ -369,7 +403,7 @@ class LineStringDetector:
         cv2.polylines(image, [pts], isClosed=False, color=(line_string.id, line_string.id, line_string.id), thickness=thickness)
         return image
 
-    def _draw_colored_lines(self, pred_img, line_strings : List[LineString], extended=False):
+    def _draw_colored_lines(self, pred_img, line_strings : List[LineString], extended=False, select=None):
         image = pred_img.copy()
         for line in line_strings:
             if line.id is None:
@@ -379,7 +413,13 @@ class LineStringDetector:
                 pts = line.ext_points.reshape((-1, 1, 2))
             else:
                 pts = line.points.reshape((-1, 1, 2))
-            cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
+            if select is None:
+                cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
+            elif select is not None:
+                if line.class_id == select:
+                    cv2.polylines(image, [pts], isClosed=False, color=color, thickness=3)
+                else:
+                    continue
         return image
 
     def _draw_blobs_with_color(self, line_map):
@@ -422,8 +462,8 @@ class LineStringDetector:
 
 
 def main():
-    line_detector = LineStringDetector(cfg.WORK_PATH)
-    line_detector.build()
+    line_detector = LineStringDetector(cfg.DATA_PATH)
+    line_detector.detect_line_strings()
 
 if __name__ == '__main__':
     main()
