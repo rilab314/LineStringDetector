@@ -7,3 +7,16 @@ __pycache__/
 *.yaml
 *.yml
 config.py
+pre_trained
+
+src/Figure/
+src/Table/
+src/visualization/
+
+.DS_Store
+classification/convertor/
+segmentation/convertor/
+checkpoint_dir/
+demo/
+pretrained/
+work_dirs/
