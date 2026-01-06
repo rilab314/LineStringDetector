@@ -10,7 +10,6 @@ config.py
 pre_trained
 
 src/Figure/
-src/Table/
 src/visualization/
 
 .DS_Store
