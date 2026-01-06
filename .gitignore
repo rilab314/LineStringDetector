@@ -17,6 +17,6 @@ src/visualization/
 classification/convertor/
 segmentation/convertor/
 checkpoint_dir/
-demo/
+InternImage/segmentation/demo/
 pretrained/
 work_dirs/

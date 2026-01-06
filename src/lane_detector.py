@@ -44,7 +44,7 @@ class LineStringDetector:
     sample_stride = 15  # 샘플링 간격 (픽셀)
     extend_len = 20  # 선 확장 길이 (픽셀)
     overlap_thresh = 2  # 겹치는 픽셀 수
-    thickness = 3
+    thickness = 5
 
     def __init__(self, data_path: str):
         self._data_path = data_path
@@ -55,12 +55,7 @@ class LineStringDetector:
         self._imshow_base = ImageShow('base images', columns=3, scale=0.8, enabled=True)
         self._imshow_proc = ImageShow('processing images', columns=3, scale=0.8, enabled=True)
         self._imshow_save = ImageShow('save images', columns=3, scale=1, enabled=True)
-        # self._exclude_classes = [0, 3, 8, 10]
         self._exclude_classes = [0]
-        self._debug_imgs = {}
-
-        self.paper_save_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/paper/satellite_ade20k_250925_mask2former_large/paper'
-        self.merge_save_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Ongoing/2025_LaneDetector/ade20k/paper/satellite_ade20k_250925_mask2former_large/paper/merge'
 
     def detect_line_strings(self):
         file_list = glob.glob(os.path.join(self._data_path, 'images', 'validation', '*.png'))
@@ -71,52 +66,17 @@ class LineStringDetector:
         pred_excepted_json = []
 
         for i, file_name in enumerate(tqdm(file_list)):
-            base_name = os.path.basename(file_name)
-            if base_name != '126.716,37.3992.png':
-                continue
+            if i == 100:
+                break
             print(f'===== [file_name] ===== {i} / {len(file_list)}, file:{file_name}')
             image, pred_img, anno_img = self._read_image(file_name)
-
-
-            # save
-            cv2.imwrite(os.path.join(self.merge_save_path, 'anno_img.png'), anno_img)
-            cv2.imwrite(os.path.join(self.merge_save_path, 'pred_img.png'), pred_img)
-
-
             self._img_shape = image.shape[:2]
             self._id_count = self.id_offset
 
-            img_name = os.path.basename(file_name)
-            img = np.zeros_like(pred_img)
-
             origin_line_strings, line_img_raw = self.extract_lines(pred_img, file_name)
-            save_origin_img = img.copy()
-            origin_colorized_map = self._draw_colored_lines(save_origin_img, origin_line_strings)
-            origin_colorized_save_path = os.path.join(self._data_path, 'results', 'figure_4', 'c', img_name)
-            os.makedirs(os.path.dirname(origin_colorized_save_path), exist_ok=True)
-            cv2.imwrite(origin_colorized_save_path, origin_colorized_map)
-
-
-
             origin_line_strings_excepted, line_img_raw_excepted = self._except_short_lines(origin_line_strings)
             line_strings, line_img_merged = self.merge_lines(origin_line_strings, 0)
             line_strings, line_img_merged = self.merge_lines(line_strings, 1)
-
-            save_merged_map_img = img.copy()
-            merged_colorized_map = self._draw_colored_lines(save_merged_map_img, line_strings)
-            merged_colorized_save_path = os.path.join(self._data_path, 'results', 'figure_4', 'd', img_name)
-            os.makedirs(os.path.dirname(merged_colorized_save_path), exist_ok=True)
-            cv2.imwrite(merged_colorized_save_path, merged_colorized_map)
-
-
-
-            save_merged_img = img.copy()
-            colorlized_map = self._draw_colored_lines(save_merged_img, line_strings, select=1)
-            colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3', 'd', img_name)
-            os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
-            cv2.imwrite(colorlized_save_path, colorlized_map)
-
-
             line_strings_excepted, line_img_excepted = self._except_short_lines(line_strings)
 
             images_to_save = {'src_img': image, 'anno_img': anno_img, 'pred_img': pred_img,
@@ -127,15 +87,15 @@ class LineStringDetector:
             origin_excepted_json = self.accumulate_preds(origin_line_strings_excepted, image_id, origin_excepted_json)
             pred_json = self.accumulate_preds(line_strings, image_id, pred_json)
             pred_excepted_json = self.accumulate_preds(line_strings_excepted, image_id, pred_excepted_json)
-            self._imshow_proc.display(0)
+            self._imshow_proc.display(1)
 
-        with open(os.path.join(self._data_path, 'results', f'thickness={self.thickness}', f'sample_stride={self.sample_stride}', 'coco_pred_instances_origin.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'result', 'coco_pred_instances_origin.json'), 'w') as f:
             json.dump(origin_json, f)
-        with open(os.path.join(self._data_path, 'results', f'thickness={self.thickness}', f'sample_stride={self.sample_stride}', 'coco_pred_instances_origin_excepted.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'result', 'coco_pred_instances_origin_excepted.json'), 'w') as f:
             json.dump(origin_excepted_json, f)
-        with open(os.path.join(self._data_path, 'results', f'thickness={self.thickness}', f'sample_stride={self.sample_stride}', 'coco_pred_instances_merged.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'result', 'coco_pred_instances_merged.json'), 'w') as f:
             json.dump(pred_json, f)
-        with open(os.path.join(self._data_path, 'results', f'thickness={self.thickness}', f'sample_stride={self.sample_stride}', 'coco_pred_instances_excepted.json'), 'w') as f:
+        with open(os.path.join(self._data_path, 'result', 'coco_pred_instances_excepted.json'), 'w') as f:
             json.dump(pred_excepted_json, f)
 
     def _read_image(self, img_file: str):
@@ -157,156 +117,12 @@ class LineStringDetector:
             # for class_id in [1, 2, 4, 5, 7, 8, 9]:
             pred_class_map = np.all(pred_img == color, axis=-1).astype(np.uint8)
             line_map, line_strings = self._thin_image(pred_class_map, class_id)
-
-            show_pred_img = np.zeros_like(pred_img, dtype=np.uint8)
-            mask = np.all(pred_img == color, axis=-1)  # bool 마스크로 유지!
-            show_pred_img[mask] = color  # 또는 pred_img[mask]
-
-            # cv2.imshow('pred_img', show_pred_img)
-            # cv2.waitKey(0)
-            # cv2.imwrite(os.path.join(self.paper_save_path, 'segmentation.png'), show_pred_img)
-            sampling_img = None
-
-            if class_id == 1:
-                img_name = os.path.basename(file_name)
-                colorlized_map = self._draw_blobs_with_color(line_map)
-                colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3','b', img_name)
-                os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
-                cv2.imwrite(colorlized_save_path, colorlized_map)
-
-                cv2.imwrite(os.path.join(self.paper_save_path, 'thinning.png'), colorlized_map)
-                sampling_img = colorlized_map.copy()
-
             ext_lines = self._extend_lines(line_map, line_strings)
             line_string_list.extend(ext_lines)
-
-            if class_id == 1:
-                img_name = os.path.basename(file_name)
-                point_img = np.zeros_like(pred_img)
-                ext_img = np.zeros_like(pred_img)
-                for line in ext_lines:
-                    pts = line.points.reshape((-1, 1, 2))
-                    cv2.polylines(point_img, [pts], isClosed=False, color=color, thickness=5)
-                cv2.imwrite(os.path.join(self.paper_save_path, 'extend_1.png'), point_img)
-                # cv2.imshow('extend_1', point_img)
-                # cv2.waitKey(0)
-                mask_img = point_img.copy()
-
-                arrow_len = 50  # 화살표 길이(픽셀). 원하는 값으로 조절
-
-
-                for line in ext_lines:
-                    pts = np.asarray(line.points, dtype=np.float32)  # (N,2)
-                    N = len(pts)
-                    if N < 2:
-                        continue
-
-                    # 1) 샘플링 점 찍기 (기존 코드)
-                    for pt in pts:
-                        x, y = pt
-                        x = int(round(x));
-                        y = int(round(y))
-                        cv2.circle(point_img, (x, y), radius=3, color=(0, 255, 255), thickness=-1)
-                    # cv2.imwrite(os.path.join(self.paper_save_path, 'extend_5.png'), point_img)
-
-                    # --- 2) 1/3 지점 기반 방향벡터 계산 (당신 코드와 동일한 로직) ---
-                    k = min(max(N // 3, 3), N - 1)  # head_prev_idx 용
-                    # head_dir: points[0] - points[k]
-                    head_vec = pts[0] - pts[k]
-                    head_norm = np.linalg.norm(head_vec)
-                    if head_norm > 1e-6:
-                        head_dir = head_vec / head_norm
-                    else:
-                        head_dir = None
-
-                    tail_prev_idx = (N - 1) - k  # = N-1 - min(max(N//3,3), N-1)
-                    tail_vec = pts[-1] - pts[tail_prev_idx]
-                    tail_norm = np.linalg.norm(tail_vec)
-                    if tail_norm > 1e-6:
-                        tail_dir = tail_vec / tail_norm
-                    else:
-                        tail_dir = None
-
-                    # --- 3) 방향벡터를 화살표로 그리기 ---
-                    # head: 시작점에서 head_dir 방향으로
-                    if head_dir is not None:
-                        p0 = (int(round(pts[0, 0])), int(round(pts[0, 1])))
-                        p1 = (int(round(pts[0, 0] + head_dir[0] * arrow_len)),
-                              int(round(pts[0, 1] + head_dir[1] * arrow_len)))
-                        cv2.arrowedLine(point_img, p0, p1, (0, 0, 255), 2, tipLength=0.25)  # 빨강
-
-                    # tail: 끝점에서 tail_dir 방향으로
-                    if tail_dir is not None:
-                        q0 = (int(round(pts[-1, 0])), int(round(pts[-1, 1])))
-                        q1 = (int(round(pts[-1, 0] + tail_dir[0] * arrow_len)),
-                              int(round(pts[-1, 1] + tail_dir[1] * arrow_len)))
-                        cv2.arrowedLine(point_img, q0, q1, (0, 0, 255), 2, tipLength=0.25)  # 파랑
-                # cv2.imshow('extend_2', point_img)
-                # cv2.waitKey(0)
-
-                cv2.imwrite(os.path.join(self.paper_save_path, 'extend_2.png'), point_img)
-
-
-                for ext_line in ext_lines:
-                    pts = ext_line.ext_points.reshape((-1, 1, 2))
-                    cv2.polylines(ext_img, [pts], isClosed=False, color=(0, 0, 255), thickness=5)
-                point_mask = np.any(mask_img > 0, axis=2)
-
-                # 2. ext_img에서 point 영역 제거
-                ext_only = ext_img.copy()
-                ext_only[point_mask] = 0
-
-                # 3. 합치기
-                result = cv2.add(mask_img, ext_only)
-
-                # cv2.imshow('extend_3', result)
-                # cv2.waitKey(0)
-                cv2.imwrite(os.path.join(self.paper_save_path, 'extend_3.png'), result)
-
-
-
-            if class_id == 1:
-                img_name = os.path.basename(file_name)
-                img = np.zeros_like(pred_img)
-                colorlized_map = self._draw_colored_lines(img, ext_lines, extended=True)
-                colorlized_save_path = os.path.join(self._data_path, 'results', 'figure_3', 'c', img_name)
-                os.makedirs(os.path.dirname(colorlized_save_path), exist_ok=True)
-                cv2.imwrite(colorlized_save_path, colorlized_map)
-
-
-                vis_img = sampling_img.copy()
-
-                # grayscale이면 BGR로 변환
-                if vis_img.ndim == 2:
-                    vis_img = cv2.cvtColor(vis_img, cv2.COLOR_GRAY2BGR)
-
-                h, w = vis_img.shape[:2]
-
-                for line in ext_lines:
-                    for pt in line.points:  # pt = [x, y] 또는 (x, y)
-                        x, y = pt
-
-                        x = int(round(x))
-                        y = int(round(y))
-
-                        if 0 <= x < w and 0 <= y < h:
-                            cv2.circle(vis_img, (x, y), radius=1, color=(0, 0, 255), thickness=-1)
-
-                # cv2.imshow("sampling_with_points", vis_img)
-                # cv2.waitKey(0)
-                # cv2.imwrite(os.path.join(self.paper_save_path, 'sampling_img.png'), vis_img)
-
-
-
-
         
         line_img = np.zeros_like(pred_img)
         line_img = self._draw_colored_lines(line_img, line_string_list, extended=True)
         self._imshow_proc.show(line_img, 'extracted lines')
-
-        #save
-        cv2.imwrite(os.path.join(self.merge_save_path, 'extracted_lines.png'), line_img)
-
 
         return line_string_list, line_img
     
@@ -321,23 +137,9 @@ class LineStringDetector:
             print(f'[merge_lines] class_id={class_id}, src lines={len(class_line_strings)}, merged={len(merged_lines)}')
             dst_line_strings.extend(merged_lines)
 
-            if class_id == 1:
-                save_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
-                for line in merged_lines:
-                    pts = line.points.reshape((-1, 1, 2))
-                    cv2.polylines(save_img, [pts], isClosed=False, color=color, thickness=5)
-                cv2.imwrite(os.path.join(self.paper_save_path, 'merged.png'), save_img)
-                # cv2.imshow('merge_lines', save_img)
-                # cv2.waitKey(0)
-
-
         line_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
         line_img = self._draw_colored_lines(line_img, dst_line_strings)
         self._imshow_proc.show(line_img, f'merged_lines_{iter}')
-
-        #save
-        if iter == 1:
-            cv2.imwrite(os.path.join(self.merge_save_path, 'merged_lines.png'), line_img)
 
         return dst_line_strings, line_img
 
@@ -373,13 +175,6 @@ class LineStringDetector:
             line_map[line_img > 0] = fill_value
             line_strings.append(LineString(id=fill_value, class_id=class_id, peak=(x, y)))
             fill_value += 1
-
-        if class_id == 1:
-            show_blobs[show_blobs != 0] += 100
-            show_blobs = np.clip(show_blobs, 0, 255).astype(np.uint8)
-            # cv2.imshow('line_blobs', show_blobs)
-            # cv2.waitKey(0)
-            # cv2.imwrite(os.path.join(self.paper_save_path, 'line_blobs.png'), show_blobs)
 
         return line_map.astype(np.uint8), line_strings
 
@@ -619,7 +414,7 @@ class LineStringDetector:
     def save_images(self, images_to_save, img_file):
         self._imshow_save.show_imgs(images_to_save)
         save_image = self._imshow_save.update_whole_image()
-        filename = img_file.replace('/images/validation', f'/results/thickness={self.thickness}/sample_stride={self.sample_stride}/result')
+        filename = img_file.replace('/images/validation', '/result/results')
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
         print('save filename:', filename)
