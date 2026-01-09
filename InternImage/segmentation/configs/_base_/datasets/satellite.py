@@ -2,7 +2,7 @@
 import ast
 
 dataset_type = 'SatelliteDataset'
-data_root = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector/ade20k'
+data_root = '/media/dolphin/My Book/Ongoing/youn_ws/LaneDetector/ade20k'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 crop_size = (512, 512)

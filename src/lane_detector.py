@@ -45,6 +45,7 @@ class LineStringDetector:
     extend_len = 20  # 선 확장 길이 (픽셀)
     overlap_thresh = 2  # 겹치는 픽셀 수
     thickness = 5
+    short_length = 30
 
     def __init__(self, data_path: str):
         self._data_path = data_path
@@ -336,7 +337,7 @@ class LineStringDetector:
         filtered_line_strings = []
         for line in line_strings:
             line.length = np.sum(np.linalg.norm(np.diff(line.points, axis=0), axis=1))
-            if line.length > 10:
+            if line.length > self.short_length:
                 filtered_line_strings.append(line)
         line_img = np.zeros([self._img_shape[0], self._img_shape[1], 3], dtype=np.uint8)
         line_img = self._draw_colored_lines(line_img, filtered_line_strings)
