@@ -66,8 +66,8 @@ class LineStringDetector:
         pred_excepted_json = []
 
         for i, file_name in enumerate(tqdm(file_list)):
-            if i == 100:
-                break
+            if i < 20:
+                continue
             print(f'===== [file_name] ===== {i} / {len(file_list)}, file:{file_name}')
             image, pred_img, anno_img = self._read_image(file_name)
             self._img_shape = image.shape[:2]
@@ -108,7 +108,7 @@ class LineStringDetector:
         images = {'image': image, 'GT_img': anno_img, 'pred_img': pred_img}
         self._imshow_base.show_imgs(images)
         return image, pred_img, anno_img
-    
+
     def extract_lines(self, pred_img: np.ndarray, file_name=None) -> Tuple[List[LineString], np.ndarray]:
         line_string_list = []
         for class_id, color in enumerate(self._palette):
@@ -119,13 +119,123 @@ class LineStringDetector:
             line_map, line_strings = self._thin_image(pred_class_map, class_id)
             ext_lines = self._extend_lines(line_map, line_strings)
             line_string_list.extend(ext_lines)
-        
+
         line_img = np.zeros_like(pred_img)
         line_img = self._draw_colored_lines(line_img, line_string_list, extended=True)
+
+        # ---------------------------------------------------
+        debug_img = np.zeros_like(pred_img)
+        for line in line_string_list:
+            if line.id is None:
+                continue
+            color = self._palette[line.class_id]
+            pts = line.points.reshape((-1, 1, 2))
+            cv2.polylines(debug_img, [pts], isClosed=False, color=color, thickness=1)
+
+        result_path = os.path.join(self._data_path, 'result', 'Figure', 'Figure_2', 'Figure_2_c')
+        os.makedirs(result_path, exist_ok=True)
+        cv2.imwrite(os.path.join(result_path, os.path.basename(file_name)), debug_img)
+        # ---------------------------------------------------
+
+        # ---------------------------------------------------
+        debug_img = np.zeros_like(pred_img)
+        for line in line_string_list:
+            if line.class_id == 1:
+                color = self._palette[line.class_id]
+                pts = line.points.reshape((-1, 1, 2))
+                cv2.polylines(debug_img, [pts], isClosed=False, color=color, thickness=1)
+
+            result_path = os.path.join(self._data_path, 'result', 'Figure', 'Figure_4', 'Figure_4_b')
+            os.makedirs(result_path, exist_ok=True)
+            cv2.imwrite(os.path.join(result_path, os.path.basename(file_name)), debug_img)
+        # ---------------------------------------------------
+
+        # ---------------------------------------------------
+        debug_img = np.zeros_like(pred_img)
+        for line in line_string_list:
+            if line.class_id == 1:
+                color = self._palette[line.class_id]
+
+                # 1. 원래 점들 (points) 시각화 및 파란색 점 찍기
+                if line.points is not None and len(line.points) > 0:
+                    pts = line.points.reshape((-1, 1, 2)).astype(np.int32)
+                    cv2.polylines(debug_img, [pts], isClosed=False, color=color, thickness=1)
+
+                    for pt in line.points:
+                        cv2.circle(debug_img, (int(pt[0]), int(pt[1])), 2, (0, 0, 255), -1)  # 빨간색
+
+                # 2. 양방향 연장선(ext_points) 화살표 그리기
+                if hasattr(line, 'ext_points') and line.ext_points is not None and len(line.ext_points) >= 2:
+                    # 원래 선의 시작점과 끝점
+                    p_start = line.points[0]
+                    p_end = line.points[-1]
+
+                    # 모든 연장점들 중 원래 선의 시작점/끝점과 가장 가까운 것들을 찾아 화살표 방향 결정
+                    # (일반적으로 ext_points의 리스트 내부 순서에 따라 결정 가능)
+
+                    # 1번 화살표: 시작 부분 연장 (ext_points[0] -> p_start 방향 혹은 반대)
+                    # 2번 화살표: 끝 부분 연장 (p_end -> ext_points[-1] 방향)
+
+                    # 보다 정확한 시각화를 위해 ext_points 전체를 그리는 대신,
+                    # 원래 선의 양 끝단에서 바깥쪽으로 향하는 화살표 두 개를 생성합니다.
+                    ext_start = line.ext_points[0]
+                    ext_end = line.ext_points[-1]
+
+                    # 원래 선의 시작점에서 시작쪽 연장 끝단으로 향하는 화살표
+                    cv2.arrowedLine(debug_img,
+                                    (int(p_start[0]), int(p_start[1])),
+                                    (int(ext_start[0]), int(ext_start[1])),
+                                    (255, 0, 0), 2, tipLength=0.3)  # 파란색
+
+                    # 원래 선의 끝점에서 끝쪽 연장 끝단으로 향하는 화살표
+                    cv2.arrowedLine(debug_img,
+                                    (int(p_end[0]), int(p_end[1])),
+                                    (int(ext_end[0]), int(ext_end[1])),
+                                    (255, 0, 0), 2, tipLength=0.3)  # 파란색
+
+            result_path = os.path.join(self._data_path, 'result', 'Figure', 'Figure_4', 'Figure_4_c')
+            os.makedirs(result_path, exist_ok=True)
+            cv2.imwrite(os.path.join(result_path, os.path.basename(file_name)), debug_img)
+        # ---------------------------------------------------
+
+        # ---------------------------------------------------
+        debug_img = np.zeros_like(pred_img)
+
+        # 2. 연장선(ext_points) 그리기
+        for line in line_string_list:
+            if line.class_id == 1:
+                # 연장선은 모두 빨간색(BGR: 0, 0, 255)으로 표시
+                ext_color = (0, 0, 255)
+                if hasattr(line, 'ext_points') and line.ext_points is not None and len(line.ext_points) > 0:
+                    # 리스트일 경우를 대비해 np.array 변환 추가
+                    ext_pts = np.array(line.ext_points, dtype=np.int32).reshape((-1, 1, 2))
+                    # 연장된 경로 그리기 (두께 3)
+                    cv2.polylines(debug_img, [ext_pts], isClosed=False, color=ext_color, thickness=3)
+
+        # 1. 원래 선 및 점 그리기
+        for line in line_string_list:
+            if line.class_id == 1:
+                color = self._palette[line.class_id]
+                if line.points is not None and len(line.points) > 0:
+                    # points 그리기 (두께 3)
+                    pts = np.array(line.points, dtype=np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(debug_img, [pts], isClosed=False, color=color, thickness=3)
+
+                    # 원래 점들에 빨간색 작은 점 찍기
+                    for pt in line.points:
+                        cv2.circle(debug_img, (int(pt[0]), int(pt[1])), 2, (0, 0, 255), -1)
+
+        # 3. 이미지 저장 (루프 밖으로 이동)
+        result_path = os.path.join(self._data_path, 'result', 'Figure', 'Figure_4', 'Figure_4_c_ext')
+        os.makedirs(result_path, exist_ok=True)
+        save_file = os.path.join(result_path, os.path.basename(file_name))
+        cv2.imwrite(save_file, debug_img)
+        # ---------------------------------------------------
+
         self._imshow_proc.show(line_img, 'extracted lines')
 
         return line_string_list, line_img
-    
+
     def merge_lines(self, src_line_strings: List[LineString], iter: int) -> Tuple[List[LineString], np.ndarray]:
         dst_line_strings = []
         print(f'=========== [merge_lines] iter={iter}, src_line_strings: {len(src_line_strings)}')
@@ -151,8 +261,6 @@ class LineStringDetector:
         y, x = np.nonzero(seg_map)
         fill_value = self.id_offset
 
-        show_blobs = line_blobs.copy()
-
         for k, (y, x) in enumerate(zip(y, x)):
             if line_blobs[y, x] > 0:
                 continue
@@ -164,8 +272,6 @@ class LineStringDetector:
             # 채워진 영역을 바이너리 마스크로 변환 (0 또는 255)
             line_blobs[temp == fill_value] = fill_value
             blob_mask = (temp == fill_value).astype(np.uint8) * 255
-
-            show_blobs = line_blobs.astype(np.int16)
 
             # cv2.ximgproc.thinning 적용 (얇은 선 추출)
             # (cv2.ximgproc.thinning은 입력이 binary 이미지여야 함)
