@@ -4,7 +4,8 @@ import json
 import csv
 import sys
 from typing import List, Tuple, Dict, Any
-
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cv2
 import numpy as np
 import pandas as pd

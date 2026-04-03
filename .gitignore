@@ -20,3 +20,4 @@ checkpoint_dir/
 InternImage/segmentation/demo/
 pretrained/
 work_dirs/
+ops_dcnv3/
