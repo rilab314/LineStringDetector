@@ -11,15 +11,15 @@ import config as cfg
 
 # ================= Configuration =================
 # 경로 설정 (사용자 환경에 맞게 수정 필요)
-JSON_PATH = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector/test/instances_validation2017.json'  # 입력 JSON 경로
+JSON_PATH = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector(copy)/test/instances_validation2017.json'  # 입력 JSON 경로
 IMAGE_DIR = os.path.join(cfg.DATA_PATH, 'images', 'validation')  # 원본 이미지 폴더 (해상도 확인용)
-SAVE_DIR = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector/test/result'  # 결과 저장 폴더
+SAVE_DIR = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector(copy)/test/result'  # 결과 저장 폴더
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # 병합 설정
 CONNECTION_THRESHOLD = 10  # 픽셀 단위: 이 거리 이내에 있으면 연결 시도
 SAMPLE_STRIDE = 15  # 샘플링 간격
-THICKNESS = 5  # 마스크 그리기 두께
+THICKNESS = 3  # 마스크 그리기 두께
 
 METAINFO = [
     {'id': 0, 'name': 'ignore', 'color': (0, 0, 0)},
@@ -331,6 +331,14 @@ class LaneJsonMerger:
         csv_path = os.path.join(self.save_dir, 'merge_stats.csv')
         print(f"Saving Stats CSV to {csv_path}...")
         df = pd.DataFrame(self.stats)
+
+        # 총계 계산 및 추가
+        if not df.empty:
+            total_before = df['before'].sum()
+            total_after = df['after'].sum()
+            total_row = pd.DataFrame([{'image_id': 'TOTAL', 'before': total_before, 'after': total_after}])
+            df = pd.concat([df, total_row], ignore_index=True)
+
         df.to_csv(csv_path, index=False)
         print("All processes done.")
 

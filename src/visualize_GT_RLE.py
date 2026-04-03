@@ -9,7 +9,7 @@ import random
 
 def visualize_merged_gt():
     # 1. 경로 설정
-    test_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector/test'
+    test_path = '/media/humpback/435806fd-079f-4ba1-ad80-109c8f6e2ec0/Archive/Dataset/unzips/LaneDetector(copy)/test'
     merged_json_path = os.path.join(test_path, 'result', 'merged_annotations.json')
     output_dir = os.path.join(test_path, 'result', 'merged_gt_random_visualized')
 
