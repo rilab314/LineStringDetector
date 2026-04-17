@@ -17,7 +17,6 @@ class ImageShow:
 
     def show_imgs(self, images: Dict[str, np.ndarray], wait_ms: int = None, scale: float = 1.0, offset: int = 0, dilate: bool = False):
         for key, img in images.items():
-            print('key', key, img.shape)
             self.show(img, key, None, scale, offset, dilate)
         if wait_ms is not None:
             cv2.waitKey(wait_ms)

@@ -1,0 +1,3 @@
+- [언어 설정](feedback_language.md) — 모든 답변과 설정 파일은 한글로 작성
+- [커밋 메시지 스타일](feedback_commit_style.md) — 한 줄, `(파일명) 변경1 // (파일명) 변경2` 형식, prefix 없음
+- [config 상수 직접 참조](feedback_config_usage.md) — cfg.XXX로 직접 참조, 중간 재선언 금지
