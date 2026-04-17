@@ -47,7 +47,7 @@ def visualize_and_logging_iou():
     # 1. 경로 설정
     IOU_THRESHOLD = 0.5
 
-    coco_anno_path = cfg.COCO_ANNO_PATH_GT_VER2
+    coco_anno_path = cfg.COCO_MERGED_ANNO_PATH
     pred_path = cfg.MERGED_JSON_PATH
     output_dir = os.path.join(cfg.RESULT_PATH, f'iou_vis_and_report_{IOU_THRESHOLD}')
     csv_save_path = os.path.join(output_dir, "instance_statistics.csv")
